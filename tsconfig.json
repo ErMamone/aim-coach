@@ -1,25 +1,16 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "esModuleInterop": true,
-    "target": "es2015",
+    "target": "es2017",
     "moduleResolution": "node",
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "downlevelIteration": true,
-    "sourceMap": true,
-    "resolveJsonModule": true,
+    "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "lib": ["es2015", "es2016", "es2017", "dom", "es2018"]
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "lib": ["es2017", "dom"],
+    "types": ["@overwolf/types"]
   },
-  "typeRoots": [
-    "/node_modules/@overwolf/ow-electron-packages-types",
-    "/node_modules/@types"
-  ],
-  "exclude": [
-    "node_modules",
-    "test",
-    "dist",
-    "**/*spec.ts"
-  ],
+  "exclude": ["node_modules", "dist"]
 }

@@ -1,98 +1,25 @@
 {
   "name": "aim-coach",
-  "version": "22.3.13",
-  "description": "Aim Coach",
-  "main": "dist/browser/index.js",
+  "version": "0.1.0",
+  "description": "Aim Coach — coach de aim para Valorant (Overwolf, ow-native)",
   "productName": "Aim Coach",
   "author": {
     "name": "Eros Mamone"
   },
   "license": "MIT",
-  "overwolf": {
-    "packages": [
-      "gep",
-      "overlay"
-    ]
-  },
-  "build": {
-    "nodeGypRebuild": false,
-    "appId": "com.erosmamone.aimcoach",
-    "asar": true,
-    "overwolf": {
-      "disableAdOptimization": false
-    },
-    "productName": "Aim Coach",
-    "directories": {
-      "output": "build"
-    },
-    "files": [
-      "dist/**/*",
-      "*.js",
-      "*.html",
-      "*.exe"
-    ],
-    "extraResources": [
-      {
-        "from": "native/publish",
-        "to": "native"
-      }
-    ],
-    "copyright": "Copyright 2026 Eros Mamone",
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-Setup-${version}.${ext}",
-      "publisherName": "Eros Mamone",
-      "legalTrademarks": "Copyright 2026 Eros Mamone"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
-  },
   "scripts": {
-    "build:renderer": "webpack --config ./webpack.renderer.config.js",
-    "build:main": "webpack --config ./webpack.main.config.js",
-    "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/publish",
-    "build": "yarn build:main && yarn build:renderer",
-    "build:all": "yarn build:native && yarn build",
-    "build:dev": "yarn webpack --watch --mode=development",
-    "build:start": "yarn run build && ow-electron . ",
-    "start": "ow-electron .",
-    "build:ow-electron": "ow-electron-builder --c.extraMetadata.name=GameEventsTester --publish=never"
-  },
-  "dependencies": {
-    "ws": "^8.21.0"
+    "build": "webpack",
+    "watch": "webpack --watch",
+    "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/publish"
   },
   "devDependencies": {
-    "@overwolf/ow-electron": "^39.6.1",
-    "@overwolf/ow-electron-builder": "latest",
-    "@overwolf/ow-electron-packages-types": "^0.0.5",
-    "@types/jquery": "^3.5.16",
-    "@types/jsonwebtoken": "^9.0.1",
-    "@types/node": "^18.11.18",
-    "@types/ws": "^8.5.10",
+    "@overwolf/types": "^3.23.1",
     "copy-webpack-plugin": "^11.0.0",
-    "electron": "21.1.0",
     "html-webpack-plugin": "^5.5.0",
-    "jest": "^29.3.1",
-    "jest-environment-jsdom": "^29.3.1",
-    "jest-junit": "^15.0.0",
-    "jest-mock-extended": "^3.0.1",
-    "reflect-metadata": "^0.1.13",
-    "ts-jest": "^29.0.3",
     "ts-loader": "^9.4.2",
-    "typescript": "^4.7.4",
-    "typescript-logging": "^2.0.2",
+    "typescript": "^4.9.5",
     "webpack": "^5.75.0",
-    "webpack-cli": "^5.0.1",
-    "wrapper-webpack-plugin": "^2.1.0"
+    "webpack-cli": "^5.0.1"
   },
   "packageManager": "yarn@4.17.0"
 }

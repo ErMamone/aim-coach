@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Aim Coach</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, 'Segoe UI', sans-serif; background: #12141a; color: #e6e8ec; height: 100vh; display: flex; flex-direction: column; }
+    header { padding: 12px 18px; border-bottom: 1px solid #232733; display: flex; align-items: center; gap: 12px; cursor: move; user-select: none; }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .hint { font-size: 12px; color: #8b90a0; margin-left: auto; }
+    .winctrls { display: flex; gap: 4px; cursor: default; }
+    .winctrls button { background: transparent; color: #b6bccb; border: 0; width: 28px; height: 24px; border-radius: 5px; font-size: 13px; cursor: pointer; margin: 0; }
+    .winctrls button:hover { background: #2a2f3d; }
+    .winctrls button.close:hover { background: #c0392b; color: #fff; }
+    kbd { background: #2a2f3d; border: 1px solid #3a4150; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+    .body { flex: 1; display: flex; min-height: 0; }
+    .panel { width: 420px; padding: 16px 18px; overflow-y: auto; border-right: 1px solid #232733; }
+    section { margin-bottom: 22px; }
+    section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #8b90a0; margin: 0 0 10px; }
+    label { display: block; font-size: 12px; color: #b6bccb; margin: 8px 0 3px; }
+    input[type=number] { width: 120px; background: #1b1e27; border: 1px solid #2a2f3d; color: #e6e8ec; border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+    .readout { font-size: 12px; color: #8b90a0; margin-top: 8px; line-height: 1.6; }
+    .readout b { color: #e6e8ec; }
+    button { background: #5b8cff; color: #fff; border: 0; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-weight: 600; cursor: pointer; margin: 6px 6px 0 0; }
+    button.secondary { background: #2a2f3d; }
+    button:disabled { opacity: .45; cursor: default; }
+    button:hover:not(:disabled) { filter: brightness(1.08); }
+    .status { font-size: 12px; margin-top: 8px; color: #b6bccb; min-height: 16px; }
+    .status.ok { color: #3ecf8e; }
+    .status.err { color: #ff6b6b; }
+    .baseline { font-family: Consolas, monospace; font-size: 11px; color: #b6bccb; background: #1b1e27; border: 1px solid #2a2f3d; border-radius: 6px; padding: 8px; margin-top: 8px; white-space: pre-wrap; }
+    #log { flex: 1; overflow-y: auto; padding: 12px 18px; margin: 0; font-family: Consolas, monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    #log .line { border-bottom: 1px solid #1b1e27; padding: 2px 0; }
+    #log .line.err { color: #ff6b6b; }
+    #log .line.ok { color: #3ecf8e; }
+    input[type=range] { width: 200px; vertical-align: middle; }
+    .resize-grip { position: fixed; z-index: 9999; }
+    .resize-grip.r { top: 0; right: 0; width: 6px; height: 100%; cursor: ew-resize; }
+    .resize-grip.b { left: 0; bottom: 0; height: 6px; width: 100%; cursor: ns-resize; }
+    .resize-grip.br { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+  </style>
+</head>
+<body>
+  <header id="titlebar">
+    <h1>Aim Coach — configuración</h1>
+    <span class="hint">Overlay en partida: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></span>
+    <div class="winctrls">
+      <button id="winMin" title="Minimizar">—</button>
+      <button id="winClose" class="close" title="Cerrar">✕</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <div class="panel">
+      <section>
+        <h2>Sensibilidad</h2>
+        <label>DPI del mouse</label>
+        <input type="number" id="dpi" min="100" step="50" value="800" />
+        <label>Sensibilidad in-game (Valorant)</label>
+        <input type="number" id="sens" min="0.05" step="0.01" value="0.4" />
+        <div class="readout" id="sensReadout"></div>
+        <button id="saveSens">Guardar sensibilidad</button>
+      </section>
+
+      <section>
+        <h2>Capturer (mouse)</h2>
+        <div class="readout">Ruta del <b>MouseCapturer.exe</b>: la app lo lanza solo al iniciar (necesita <code>plugins/process_manager.dll</code> desbloqueado).</div>
+        <input type="text" id="capturerPath" placeholder="C:\…\native\publish\MouseCapturer.exe" style="width: 100%;" />
+        <button id="saveCapturer">Guardar ruta del capturer</button>
+        <div class="status" id="capturerStatus"></div>
+      </section>
+
+      <section>
+        <h2>Calibración · giro 360</h2>
+        <div class="readout">Disparala (botón o <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> en partida): cuenta regresiva en el overlay, girás UNA vuelta limpia, se mide sola.</div>
+        <button id="cal360Start">Calibrar 360 (in-game)</button>
+        <div class="status" id="cal360Status"></div>
+      </section>
+
+      <section>
+        <h2>Calibración · baseline (sprays)</h2>
+        <div class="readout">Disparala (botón o <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> en partida): ventana de 30s para sprayear en el Range, deriva tu referencia sola.</div>
+        <button id="calSprayStart">Calibrar baseline (30s)</button>
+        <div class="status" id="calSprayStatus"></div>
+      </section>
+
+      <section>
+        <h2>Baseline actual</h2>
+        <div class="baseline" id="baselineView">—</div>
+      </section>
+
+      <section>
+        <button id="toggleBtn" class="secondary">Mostrar/ocultar overlay</button>
+        <button id="clearBtn" class="secondary">Limpiar log</button>
+      </section>
+    </div>
+
+    <div id="log"></div>
+  </div>
+</body>
+</html>
