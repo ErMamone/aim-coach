@@ -1,0 +1,31 @@
+# Dependencias
+node_modules/
+
+# Yarn Berry (PnP) — no zero-install: se regenera con `yarn install`
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
+
+# Build output
+dist/
+build/
+
+# Nativo (.NET) — artefactos de compilación (se rebuildean con `dotnet publish`).
+# El single-file self-contained pesa ~147MB, no se versiona: se regenera desde
+# native/MouseCapturer.cs (ver CLAUDE.md).
+native/obj/
+native/bin/
+native/publish/
+
+# Herramientas de Claude Code (no forman parte del proyecto)
+.claude/
+CLAUDE.md
+
+# Logs / varios
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe = sin ventana de consola. WinForms por el message loop / NativeWindow. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>MouseCapturer</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Para un exe portable sin runtime instalado, publicar con:
+       dotnet publish -c Release -r win-x64 self-contained y PublishSingleFile en true.
+       (No se escriben los flags con doble guion aca: XML prohibe guion-guion dentro de un comentario.) -->
+
+
+</Project>

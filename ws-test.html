@@ -1,0 +1,105 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Capturer WebSocket test</title>
+<style>
+  :root { --bg:#16181d; --pan:#1e2128; --line:#2c303a; --txt:#e6e8ec; --mut:#8b909b; --acc:#5b8cff; --ok:#3ecf8e; --bad:#ff6b6b; }
+  * { box-sizing:border-box; font-family:system-ui,Segoe UI,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--txt); padding:18px; max-width:680px; }
+  h1 { font-size:16px; margin:0 0 12px; }
+  .bar { display:flex; gap:10px; align-items:center; margin-bottom:14px; }
+  input { background:#12141a; border:1px solid var(--line); color:var(--txt); padding:8px; border-radius:6px; font-size:13px; width:220px; }
+  button { background:var(--acc); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:13px; cursor:pointer; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--txt); }
+  .status { font-size:13px; font-weight:600; padding:4px 10px; border-radius:20px; }
+  .status.off { background:rgba(139,144,155,.15); color:var(--mut); }
+  .status.on  { background:rgba(62,207,142,.15); color:var(--ok); }
+  .status.err { background:rgba(255,107,107,.15); color:var(--bad); }
+  .grid { display:flex; gap:14px; margin-bottom:14px; flex-wrap:wrap; }
+  .stat { background:var(--pan); border:1px solid var(--line); border-radius:8px; padding:10px 14px; min-width:110px; }
+  .stat .k { font-size:11px; color:var(--mut); } .stat .v { font-size:20px; font-weight:600; }
+  .sign { font-size:12px; margin-bottom:14px; padding:10px 12px; border-radius:8px; background:var(--pan); border:1px solid var(--line); }
+  .sign b { color:var(--acc); }
+  #log { background:#0e1014; border:1px solid var(--line); border-radius:8px; padding:10px; height:260px; overflow:auto; font-family:ui-monospace,Consolas,monospace; font-size:11px; line-height:1.5; }
+  .down { color:#ffd479; } .up { color:#7fd1ff; } .move { color:#6b7280; }
+</style>
+
+<h1>Capturer WebSocket test</h1>
+
+<div class="bar">
+  <input id="url" value="ws://127.0.0.1:9595/">
+  <button id="connect">Conectar</button>
+  <button id="clear" class="ghost">Limpiar log</button>
+  <span id="status" class="status off">desconectado</span>
+</div>
+
+<div class="grid">
+  <div class="stat"><div class="k">eventos/s</div><div class="v" id="rate">0</div></div>
+  <div class="stat"><div class="k">total</div><div class="v" id="total">0</div></div>
+  <div class="stat"><div class="k">clicks izq</div><div class="v" id="clicks">0</div></div>
+</div>
+
+<div class="sign" id="signbox">
+  <b>Test de signo de dy:</b> mové el mouse claramente <b>hacia abajo</b> y mirá qué dice acá.
+  Lo necesitás para la lógica de recoil.
+</div>
+
+<div id="log"></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let ws = null, total = 0, clicks = 0, windowCount = 0;
+  let dySum = 0, dySamples = 0;
+
+  setInterval(() => { $('rate').textContent = windowCount; windowCount = 0; }, 1000);
+
+  $('connect').onclick = () => {
+    if (ws) { try { ws.close(); } catch (_) {} ws = null; return; }
+    const url = $('url').value.trim();
+    setStatus('off', 'conectando...');
+    try { ws = new WebSocket(url); } catch (e) { setStatus('err', 'URL invalida'); return; }
+
+    ws.onopen = () => { setStatus('on', 'conectado'); $('connect').textContent = 'Desconectar'; };
+    ws.onclose = () => { setStatus('off', 'desconectado'); $('connect').textContent = 'Conectar'; ws = null; };
+    ws.onerror = () => setStatus('err', 'error de conexion');
+    ws.onmessage = (msg) => handle(msg.data);
+  };
+
+  $('clear').onclick = () => { $('log').innerHTML = ''; };
+
+  function handle(raw) {
+    total++; windowCount++;
+    $('total').textContent = total;
+    let ev;
+    try { ev = JSON.parse(raw); } catch (_) { return logLine('move', raw); }
+
+    if (ev.a === 'down' && ev.b === 'left') { clicks++; $('clicks').textContent = clicks; }
+
+    if (ev.a === 'move' && ev.dy !== 0) {
+      dySum += ev.dy; dySamples++;
+      if (dySamples >= 20) {
+        const avg = dySum / dySamples;
+        const dir = avg > 0 ? 'POSITIVO al bajar' : 'NEGATIVO al bajar';
+        const note = avg > 0
+          ? 'convencion del motor OK (dy&gt;0 = hacia abajo).'
+          : 'INVERTIDO respecto al motor: hay que invertir el signo en ruleEngine/calibration.';
+        $('signbox').innerHTML = '<b>Signo de dy:</b> ' + dir + ' (promedio ' + avg.toFixed(1) + '). ' + note;
+        dySum = 0; dySamples = 0;
+      }
+    }
+
+    logLine(ev.a, raw);
+  }
+
+  function logLine(cls, text) {
+    const log = $('log');
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
+    const div = document.createElement('div');
+    div.className = cls;
+    div.textContent = text;
+    log.appendChild(div);
+    if (log.childElementCount > 400) log.removeChild(log.firstChild);
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+
+  function setStatus(cls, txt) { const s = $('status'); s.className = 'status ' + cls; s.textContent = txt; }
+</script>
