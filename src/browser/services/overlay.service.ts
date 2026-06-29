@@ -96,9 +96,13 @@ export class OverlayService extends EventEmitter {
     this.overlayApi.on('game-launched', (event, gameInfo) => {
       this.log('game launched', gameInfo);
 
-      if (gameInfo.processInfo.isElevated) {
-        // ToDo: emit to log and notify user- we can't inject to elevated games
-        // if the application is not eleveted.
+      if (gameInfo.processInfo?.isElevated) {
+        // No podemos inyectar en juegos elevados si la app no corre elevada.
+        // Valorant corre elevado por Vanguard -> hay que correr ow-electron como ADMINISTRADOR.
+        this.log(
+          'game is ELEVATED — no se puede inyectar salvo que la app corra como administrador (Valorant/Vanguard). Skipping injection.',
+          gameInfo.name
+        );
         return;
       }
       // pass the decision to the application

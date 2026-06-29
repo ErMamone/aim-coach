@@ -33,8 +33,8 @@
     ],
     "extraResources": [
       {
-        "from": "native/publish/MouseCapturer.exe",
-        "to": "native/MouseCapturer.exe"
+        "from": "native/publish",
+        "to": "native"
       }
     ],
     "copyright": "Copyright 2026 Eros Mamone",
@@ -59,7 +59,9 @@
   "scripts": {
     "build:renderer": "webpack --config ./webpack.renderer.config.js",
     "build:main": "webpack --config ./webpack.main.config.js",
+    "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/publish",
     "build": "yarn build:main && yarn build:renderer",
+    "build:all": "yarn build:native && yarn build",
     "build:dev": "yarn webpack --watch --mode=development",
     "build:start": "yarn run build && ow-electron . ",
     "start": "ow-electron .",

@@ -15,4 +15,10 @@ rendererConfig.plugins.push(new HtmlWebpackPlugin({
   inject: false
 }));
 
+rendererConfig.plugins.push(new HtmlWebpackPlugin({
+  template: './src/renderer/main/index.html',
+  filename: path.join(__dirname, './dist/renderer/index.html'),
+  inject: false
+}));
+
 module.exports = rendererConfig;

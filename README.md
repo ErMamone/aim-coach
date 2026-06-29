@@ -6,24 +6,6 @@ Coach de aim para Valorant. Feedback baseline-relativo desde dos fuentes:
 
 El feedback se acumula durante la ronda y se superficie en huecos muertos (post-muerte / fin de ronda).
 
-## Estructura
-
-```
-native/
-  MouseCapturer.cs      raw input -> servidor WebSocket ws://127.0.0.1:9595/
-  MouseCapturer.csproj
-engine/
-  ruleEngine.js         motor de reglas (baseline-relativo)
-  calibration.js        matematica de sens + derivacion de baseline
-  simulate.js           prueba el motor con datos sinteticos (node simulate.js)
-  calibrate_demo.js     prueba la calibracion (node calibrate_demo.js)
-overlay/
-  manifest.json         app Overwolf (windows: background, overlay, calibration)
-  background.html       carga background.js (bundle)
-  overwolf.js           background controller: WebSocket + GEP + forward al overlay  <-- se bundlea
-  overlay.html          overlay in-game que muestra el feedback
-  calibration-window.html  ventana de DPI/sens + 360 + drill -> baseline
-```
 
 ## 1. Capturador C#
 
