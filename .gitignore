@@ -24,6 +24,8 @@ native/publish/
 # Herramientas de Claude Code (no forman parte del proyecto)
 .claude/
 CLAUDE.md
+docs/
+AGENTS.md
 
 # Logs / varios
 *.log

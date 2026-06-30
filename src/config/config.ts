@@ -11,6 +11,9 @@ interface AppConfig {
   capturerPath?: string;
   overlayScale?: number;
   overlayMaxItems?: number;
+  overlayWidthPct?: number;
+  overlayHeightPct?: number;
+  debugFlicks?: boolean;
   calWeapon?: string;
   baselines?: { [weapon: string]: any };
 }
@@ -86,18 +89,35 @@ $('saveCapturer')?.addEventListener('click', () => {
   setStatus('capturerStatus', 'Ruta guardada. La app intentará lanzar el capturer.', 'ok');
 });
 
-// ---- overlay: tamaño y cantidad de errores ----
+// ---- overlay: tamaño (% pantalla), texto y cantidad de errores ----
 const overlayScaleInput = $('overlayScale') as HTMLInputElement;
 const overlayMaxInput = $('overlayMaxItems') as HTMLInputElement;
+const overlayWInput = $('overlayWidthPct') as HTMLInputElement;
+const overlayHInput = $('overlayHeightPct') as HTMLInputElement;
 function renderOverlayLabels(): void {
   const sv = $('overlayScaleVal'); if (sv) sv.textContent = parseFloat(overlayScaleInput.value).toFixed(1) + '×';
+  const ow = $('owVal'); if (ow) ow.textContent = overlayWInput.value + '%';
+  const oh = $('ohVal'); if (oh) oh.textContent = overlayHInput.value + '%';
 }
 overlayScaleInput?.addEventListener('input', () => {
   config.overlayScale = parseFloat(overlayScaleInput.value);
   renderOverlayLabels(); saveConfig(config); applyToBackground();
 });
 overlayMaxInput?.addEventListener('input', () => {
-  config.overlayMaxItems = parseInt(overlayMaxInput.value, 10) || 3;
+  config.overlayMaxItems = parseInt(overlayMaxInput.value, 10) || 6;
+  saveConfig(config); applyToBackground();
+});
+overlayWInput?.addEventListener('input', () => {
+  config.overlayWidthPct = (parseInt(overlayWInput.value, 10) || 30) / 100;
+  renderOverlayLabels(); saveConfig(config); applyToBackground();
+});
+overlayHInput?.addEventListener('input', () => {
+  config.overlayHeightPct = (parseInt(overlayHInput.value, 10) || 45) / 100;
+  renderOverlayLabels(); saveConfig(config); applyToBackground();
+});
+const debugFlicksInput = $('debugFlicks') as HTMLInputElement;
+debugFlicksInput?.addEventListener('change', () => {
+  config.debugFlicks = debugFlicksInput.checked;
   saveConfig(config); applyToBackground();
 });
 
@@ -202,7 +222,10 @@ dpiInput.value = String(config.dpi);
 sensInput.value = String(config.sens);
 capturerInput.value = config.capturerPath || '';
 overlayScaleInput.value = String(config.overlayScale || 1);
-overlayMaxInput.value = String(config.overlayMaxItems || 3);
+overlayMaxInput.value = String(config.overlayMaxItems || 6);
+overlayWInput.value = String(Math.round((config.overlayWidthPct || 0.30) * 100));
+overlayHInput.value = String(Math.round((config.overlayHeightPct || 0.45) * 100));
+if (debugFlicksInput) debugFlicksInput.checked = !!config.debugFlicks;
 if (calWeaponSelect && config.calWeapon) calWeaponSelect.value = config.calWeapon;
 renderOverlayLabels();
 renderSensReadout();

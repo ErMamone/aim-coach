@@ -21,8 +21,11 @@ let dpi = 800;
 let sens = 0.4;
 let capturerPath = '';        // ruta absoluta al MouseCapturer.exe (se setea en config)
 let capturerLaunched = false;
-let overlayScale = 1;         // tamaño del overlay (ajustable desde config)
+let overlayScale = 1;         // escala del TEXTO del overlay (ajustable desde config)
 let overlayMaxItems = 3;      // cantidad de últimos errores a mostrar (ajustable desde config)
+let overlayWidthPct = 0.30;   // ancho del overlay como % de la pantalla del juego
+let overlayHeightPct = 0.45;  // alto del overlay como % de la pantalla del juego
+let debugFlicks = false;      // loguear métricas de cada flick (para tunear el motor)
 let calWeapon = 'vandal';     // arma seleccionada para calibrar (en el Range no se autodetecta)
 
 // estado del stream de mouse y de la calibracion del giro 360
@@ -55,7 +58,7 @@ function log(msg: string, ...args: any[]): void {
 function start(): void {
   engine = new AimCoachEngine({
     onFeedback: (f: any) => showFeedback(f),
-    onFlick: (type: string) => overlayFlick(type),
+    onFlick: (info: any) => overlayFlick(info),
     onCalProgress: (p: any) => onCalSprayProgress(p),
   });
   loadSavedConfig();
@@ -84,6 +87,9 @@ function loadSavedConfig(): void {
     if (typeof saved.capturerPath === 'string') capturerPath = saved.capturerPath;
     if (typeof saved.overlayScale === 'number') overlayScale = saved.overlayScale;
     if (typeof saved.overlayMaxItems === 'number') overlayMaxItems = saved.overlayMaxItems;
+    if (typeof saved.overlayWidthPct === 'number') overlayWidthPct = saved.overlayWidthPct;
+    if (typeof saved.overlayHeightPct === 'number') overlayHeightPct = saved.overlayHeightPct;
+    if (typeof saved.debugFlicks === 'boolean') debugFlicks = saved.debugFlicks;
     if (typeof saved.calWeapon === 'string') calWeapon = saved.calWeapon;
     if (saved.baselines) {
       engine.setBaselines(saved.baselines);
@@ -106,6 +112,10 @@ function onConfigMessage(m: any): void {
         if (typeof m.content.overlayScale === 'number') overlayScale = m.content.overlayScale;
         if (typeof m.content.overlayMaxItems === 'number') overlayMaxItems = m.content.overlayMaxItems;
         if (typeof m.content.overlayScale === 'number' || typeof m.content.overlayMaxItems === 'number') sendOverlayConfig();
+        if (typeof m.content.overlayWidthPct === 'number') overlayWidthPct = m.content.overlayWidthPct;
+        if (typeof m.content.overlayHeightPct === 'number') overlayHeightPct = m.content.overlayHeightPct;
+        if (typeof m.content.overlayWidthPct === 'number' || typeof m.content.overlayHeightPct === 'number') applyOverlaySize();
+        if (typeof m.content.debugFlicks === 'boolean') debugFlicks = m.content.debugFlicks;
         if (typeof m.content.calWeapon === 'string') calWeapon = m.content.calWeapon;
         if (m.content.baselines) engine.setBaselines(m.content.baselines);
         log('config aplicada (dpi ' + dpi + ', sens ' + sens + ', arma ' + calWeapon + ')');
@@ -226,8 +236,11 @@ function finishBaseline(): void {
   calBusy = false;
 }
 
-function overlayFlick(type: string): void {
-  overwolf.windows.sendMessage('in_game', 'flick', { type }, () => {});
+function overlayFlick(info: any): void {
+  overwolf.windows.sendMessage('in_game', 'flick', { type: info.type }, () => {});
+  if (debugFlicks) {
+    log(`FLICK ${info.type} · dur ${info.dur}ms · mag ${info.mag} · ajuste ${info.aligned} (umbral ${info.threshold})`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -241,11 +254,31 @@ function openWindow(name: string, cb?: () => void): void {
 }
 
 function openOverlay(): void {
-  openWindow('in_game', () => { overlayVisible = true; log('overlay abierto'); setTimeout(sendOverlayConfig, 300); });
+  openWindow('in_game', () => {
+    overlayVisible = true; log('overlay abierto');
+    setTimeout(() => { sendOverlayConfig(); applyOverlaySize(); }, 300);
+  });
 }
 
 function sendOverlayConfig(): void {
   overwolf.windows.sendMessage('in_game', 'overlay-cfg', { scale: overlayScale, maxItems: overlayMaxItems }, () => {});
+}
+
+// Tamaño del overlay = % de la resolución del juego (matchea cualquier pantalla).
+function applyOverlaySize(): void {
+  overwolf.games.getRunningGameInfo2((info: any) => {
+    const gi = info && info.gameInfo;
+    const sw = (gi && (gi.logicalWidth || gi.width)) || 1920;
+    const sh = (gi && (gi.logicalHeight || gi.height)) || 1080;
+    overwolf.windows.obtainDeclaredWindow('in_game', (res: any) => {
+      if (!res || !res.success || !res.window) return;
+      overwolf.windows.changeSize({
+        window_id: res.window.id,
+        width: Math.round(sw * overlayWidthPct),
+        height: Math.round(sh * overlayHeightPct),
+      });
+    });
+  });
 }
 
 function toggleOverlay(): void {
@@ -359,7 +392,10 @@ function handleInfoUpdate(payload: any): void {
         } catch (_) {}
       }
     }
-    if (mi.round_number) engine.setPhase('active');
+    // round_phase: shopping (compra) | combat (activo) | end / game_end (fin de ronda)
+    if (mi.round_phase === 'end' || mi.round_phase === 'game_end') engine.setPhase('roundEnd');
+    else if (mi.round_phase === 'shopping') engine.setPhase('buy');
+    else if (mi.round_phase === 'combat' || mi.round_number) engine.setPhase('active');
   }
 }
 
@@ -463,7 +499,9 @@ function connectMouseStream(): void {
 // Feedback -> overlay
 // ---------------------------------------------------------------------------
 function showFeedback(feedback: any): void {
-  overwolf.windows.sendMessage('in_game', 'feedback', feedback, () => {});
+  // overlay: solo el mensaje corto/accionable. log: el detalle con numeros.
+  overwolf.windows.sendMessage('in_game', 'feedback', { prio: feedback.prio, msg: feedback.msg }, () => {});
+  log('FEEDBACK: ' + (feedback.detail || feedback.msg));
 }
 
 start();
