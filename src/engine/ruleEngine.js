@@ -20,16 +20,20 @@ const SPAM_ICI_MS = 90;            // inter-click interval por debajo = sintoma 
 const CORRECTION_WINDOW_MS = 90;   // ventana post-click para medir el ajuste del flick
 const FLICK_ERR_COUNTS = 8;        // |ajuste| por debajo = flick "perfecto"; arriba = flojo/pasado
 const FLICK_STREAK_N = 4;          // flicks flojos/pasados seguidos -> recomendar cambiar sens
+const MACRO_WINDOW_MS = 150;       // ventana para detectar rafaga de clicks inhumana
+const MACRO_CLICKS = 5;            // clicks dentro de la ventana = posible macro / mouse defectuoso
 
 class AimCoachEngine {
   constructor(opts = {}) {
     this.onFeedback = opts.onFeedback || (() => {});
     this.onCalProgress = opts.onCalProgress || (() => {}); // feedback de calibracion
     this.onFlick = opts.onFlick || (() => {});             // clasificacion por flick (flojo/perfecto/pasado)
-    this.baseline = opts.baseline || DEFAULT_BASELINE;
+    this.baselines = opts.baselines || {};                 // baseline POR ARMA: { vandal: {...}, phantom: {...} }
+    this._calWeapon = null;                                // arma que se esta calibrando
 
     this._flickStreakType = null;  // racha de flicks del mismo error (flojo|pasado)
     this._flickStreakCount = 0;
+    this._recentClicks = [];       // timestamps de clicks recientes (deteccion de macro)
     this.weapon = null;
     this.deadTime = false;
     this._timing = 'onDeath';      // 'instant' (practica/range) | 'onDeath' (partidas)
@@ -51,21 +55,29 @@ class AimCoachEngine {
     this._pending = [];
   }
 
-  setBaseline(b) { this.baseline = { ...DEFAULT_BASELINE, ...b }; }
+  // Carga todos los baselines por arma (desde la config guardada).
+  setBaselines(map) { this.baselines = map || {}; }
 
-  // -------- modo calibracion --------
-  // Junta sprays (y overshoots de flicks) hechos durante un drill, para derivar el baseline personal.
-  startCalibration() {
+  // Baseline del arma equipada (cae al default si esa arma no fue calibrada).
+  _activeBaseline() {
+    return (this.weapon && this.baselines[this.weapon]) || DEFAULT_BASELINE;
+  }
+
+  // -------- modo calibracion (por arma) --------
+  // weapon: arma que se esta calibrando (ej 'vandal'). Junta sprays para derivar SU baseline.
+  startCalibration(weapon) {
+    this._calWeapon = weapon || 'generic';
     this._calibrator = new BaselineCalibrator();
     this._calibrating = true;
   }
-  // Devuelve el baseline derivado. Lanza si hubo < 3 sprays.
+  // Deriva el baseline, lo guarda bajo el arma calibrada y lo devuelve. Lanza si < 3 sprays.
   finishCalibration() {
     this._calibrating = false;
     const baseline = this._calibrator.build();
     this._calibrator = null;
-    this.setBaseline(baseline);
-    return baseline;
+    const weapon = this._calWeapon || 'generic';
+    this.baselines[weapon] = { ...DEFAULT_BASELINE, ...baseline };
+    return { weapon, baseline };
   }
   cancelCalibration() {
     this._calibrating = false;
@@ -142,6 +154,7 @@ class AimCoachEngine {
       if (ici < SPAM_ICI_MS) this._round.shortICIs++;
     }
     this._lastClickT = ev.t;
+    this._checkMacro(ev.t);
     this._approachSign = Math.sign(this._lastDx || 0);
     this._settledAtClick = this._recentSpeed < 0.15;
 
@@ -216,9 +229,21 @@ class AimCoachEngine {
     }
   }
 
+  // Prevencion de errores: rafaga de clicks inhumana (macro o mouse con doble-click).
+  // Se reporta SIEMPRE al instante porque es info critica (riesgo de ban).
+  _checkMacro(t) {
+    this._recentClicks.push(t);
+    this._recentClicks = this._recentClicks.filter(ct => t - ct <= MACRO_WINDOW_MS);
+    if (this._recentClicks.length >= MACRO_CLICKS) {
+      this._queue(99, `ALERTA: ${this._recentClicks.length} clicks en ${MACRO_WINDOW_MS}ms. Parece macro o mouse con doble-click — riesgo de ban. Revisá tu mouse/configuración.`);
+      this._surface();
+      this._recentClicks = [];
+    }
+  }
+
   // -------- reglas (todas relativas al baseline personal) --------
   _evaluateRoundRules() {
-    const r = this._round, b = this.baseline;
+    const r = this._round, b = this._activeBaseline();
 
     // R1: spam de clicks
     if (r.shortICIs >= 4) {
@@ -274,9 +299,17 @@ class AimCoachEngine {
       const body = num(r.report.bodyshots), legs = num(r.report.legshots);
       const total = hits || (hs + body + legs);
       if (total >= 4) {
-        const hsRatio = hs / total;
-        if (hsRatio < 0.2) this._queue(60, `Esta ronda: ${hs}/${total} a la cabeza. Apuntás bajo — subí el crosshair a altura de cabeza ANTES de ver al enemigo.`);
-        else if (hsRatio > 0.5) this._queue(20, `Buen crosshair placement (${hs}/${total} headshots). Mantenelo.`);
+        // Placement binario: pecho + cabeza = BUENO; el resto (piernas/abajo) = MALO.
+        const good = hs + body;
+        const bad = total - good;        // piernas y todo lo que no sea pecho/cabeza
+        const goodRatio = good / total;
+        if (goodRatio < 0.7) {
+          this._queue(70, `Placement MALO: solo ${good}/${total} al pecho/cabeza (${bad} abajo). Subí la mira a altura de pecho/cabeza.`);
+        } else if (hs / total >= 0.4) {
+          this._queue(20, `Placement bueno (${hs}/${total} a la cabeza). Mantenelo.`);
+        } else {
+          this._queue(25, `Placement OK (${good}/${total} pecho/cabeza). Apuntá un poco más arriba para más headshots.`);
+        }
       }
     }
   }

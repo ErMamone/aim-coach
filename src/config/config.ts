@@ -9,7 +9,10 @@ interface AppConfig {
   dpi: number;
   sens: number;
   capturerPath?: string;
-  baseline?: any;
+  overlayScale?: number;
+  overlayMaxItems?: number;
+  calWeapon?: string;
+  baselines?: { [weapon: string]: any };
 }
 
 function loadConfig(): AppConfig {
@@ -49,7 +52,12 @@ function renderSensReadout(): void {
 function renderBaseline(): void {
   const el = $('baselineView');
   if (!el) return;
-  el.textContent = config.baseline ? JSON.stringify(config.baseline, null, 2) : '— (sin calibrar, usando default)';
+  const b = config.baselines || {};
+  const weapons = Object.keys(b);
+  if (!weapons.length) { el.textContent = '— (ningún arma calibrada, usando default)'; return; }
+  el.textContent = weapons.map(w =>
+    `${w}: pull ${b[w].pullPerMsBaseline} · mono ${b[w].monotonicityBaseline} · flickBias ${b[w].flickBias}`
+  ).join('\n');
 }
 
 dpiInput.addEventListener('input', renderSensReadout);
@@ -63,12 +71,34 @@ $('saveSens')?.addEventListener('click', () => {
   setStatus('cal360Status', 'Sensibilidad guardada.', 'ok');
 });
 
+const calWeaponSelect = $('calWeapon') as HTMLSelectElement;
+calWeaponSelect?.addEventListener('change', () => {
+  config.calWeapon = calWeaponSelect.value;
+  saveConfig(config);
+  applyToBackground();
+});
+
 const capturerInput = $('capturerPath') as HTMLInputElement;
 $('saveCapturer')?.addEventListener('click', () => {
   config.capturerPath = capturerInput.value.trim();
   saveConfig(config);
   applyToBackground();
   setStatus('capturerStatus', 'Ruta guardada. La app intentará lanzar el capturer.', 'ok');
+});
+
+// ---- overlay: tamaño y cantidad de errores ----
+const overlayScaleInput = $('overlayScale') as HTMLInputElement;
+const overlayMaxInput = $('overlayMaxItems') as HTMLInputElement;
+function renderOverlayLabels(): void {
+  const sv = $('overlayScaleVal'); if (sv) sv.textContent = parseFloat(overlayScaleInput.value).toFixed(1) + '×';
+}
+overlayScaleInput?.addEventListener('input', () => {
+  config.overlayScale = parseFloat(overlayScaleInput.value);
+  renderOverlayLabels(); saveConfig(config); applyToBackground();
+});
+overlayMaxInput?.addEventListener('input', () => {
+  config.overlayMaxItems = parseInt(overlayMaxInput.value, 10) || 3;
+  saveConfig(config); applyToBackground();
 });
 
 // ---- helpers UI ----
@@ -128,11 +158,13 @@ overwolf.windows.onMessageReceived.addListener((m: any) => {
       if (m.content) setStatus('calSprayStatus', m.content.text, 'err');
       break;
     case 'cal-spray-result':
-      if (m.content && m.content.baseline) {
-        config.baseline = m.content.baseline;
+      if (m.content && m.content.baseline && m.content.weapon) {
+        if (!config.baselines) config.baselines = {};
+        config.baselines[m.content.weapon] = m.content.baseline;
         saveConfig(config);
+        applyToBackground();
         renderBaseline();
-        setStatus('calSprayStatus', 'Baseline calibrado y guardado.', 'ok');
+        setStatus('calSprayStatus', `Baseline de ${m.content.weapon} calibrado y guardado.`, 'ok');
       } else {
         setStatus('calSprayStatus', 'No se pudo: ' + (m.content && m.content.error), 'err');
       }
@@ -160,10 +192,19 @@ $('titlebar')?.addEventListener('mousedown', (e) => {
 $('winMin')?.addEventListener('click', () => { if (currentWindowId) overwolf.windows.minimize(currentWindowId); });
 $('winClose')?.addEventListener('click', () => { if (currentWindowId) overwolf.windows.close(currentWindowId); });
 
+// redimensionado (ventana sin marco -> grips en borde derecho, inferior y esquina)
+$('gripR')?.addEventListener('mousedown', () => { if (currentWindowId) overwolf.windows.dragResize(currentWindowId, overwolf.windows.enums.WindowDragEdge.Right); });
+$('gripB')?.addEventListener('mousedown', () => { if (currentWindowId) overwolf.windows.dragResize(currentWindowId, overwolf.windows.enums.WindowDragEdge.Bottom); });
+$('gripBR')?.addEventListener('mousedown', () => { if (currentWindowId) overwolf.windows.dragResize(currentWindowId, overwolf.windows.enums.WindowDragEdge.BottomRight); });
+
 // ---- init ----
 dpiInput.value = String(config.dpi);
 sensInput.value = String(config.sens);
 capturerInput.value = config.capturerPath || '';
+overlayScaleInput.value = String(config.overlayScale || 1);
+overlayMaxInput.value = String(config.overlayMaxItems || 3);
+if (calWeaponSelect && config.calWeapon) calWeaponSelect.value = config.calWeapon;
+renderOverlayLabels();
 renderSensReadout();
 renderBaseline();
 applyToBackground();

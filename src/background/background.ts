@@ -22,6 +22,8 @@ let sens = 0.4;
 let capturerPath = '';        // ruta absoluta al MouseCapturer.exe (se setea en config)
 let capturerLaunched = false;
 let overlayScale = 1;         // tamaño del overlay (ajustable desde config)
+let overlayMaxItems = 3;      // cantidad de últimos errores a mostrar (ajustable desde config)
+let calWeapon = 'vandal';     // arma seleccionada para calibrar (en el Range no se autodetecta)
 
 // estado del stream de mouse y de la calibracion del giro 360
 let mouseConnected = false;
@@ -81,9 +83,11 @@ function loadSavedConfig(): void {
     if (typeof saved.sens === 'number') sens = saved.sens;
     if (typeof saved.capturerPath === 'string') capturerPath = saved.capturerPath;
     if (typeof saved.overlayScale === 'number') overlayScale = saved.overlayScale;
-    if (saved.baseline) {
-      engine.setBaseline(saved.baseline);
-      log('baseline cargado de config guardada');
+    if (typeof saved.overlayMaxItems === 'number') overlayMaxItems = saved.overlayMaxItems;
+    if (typeof saved.calWeapon === 'string') calWeapon = saved.calWeapon;
+    if (saved.baselines) {
+      engine.setBaselines(saved.baselines);
+      log('baselines por arma cargados: ' + Object.keys(saved.baselines).join(', '));
     }
   } catch (_) {}
 }
@@ -99,9 +103,12 @@ function onConfigMessage(m: any): void {
         if (typeof m.content.dpi === 'number') dpi = m.content.dpi;
         if (typeof m.content.sens === 'number') sens = m.content.sens;
         if (typeof m.content.capturerPath === 'string') capturerPath = m.content.capturerPath;
-        if (typeof m.content.overlayScale === 'number') { overlayScale = m.content.overlayScale; sendOverlayScale(); }
-        if (m.content.baseline) engine.setBaseline(m.content.baseline);
-        log('config aplicada (dpi ' + dpi + ', sens ' + sens + ')');
+        if (typeof m.content.overlayScale === 'number') overlayScale = m.content.overlayScale;
+        if (typeof m.content.overlayMaxItems === 'number') overlayMaxItems = m.content.overlayMaxItems;
+        if (typeof m.content.overlayScale === 'number' || typeof m.content.overlayMaxItems === 'number') sendOverlayConfig();
+        if (typeof m.content.calWeapon === 'string') calWeapon = m.content.calWeapon;
+        if (m.content.baselines) engine.setBaselines(m.content.baselines);
+        log('config aplicada (dpi ' + dpi + ', sens ' + sens + ', arma ' + calWeapon + ')');
         launchCapturer(); // por si recien configuraron la ruta
       }
       break;
@@ -186,10 +193,10 @@ function startCalBaseline(): void {
   calBusy = true;
   openOverlay();
   log('CAL baseline: empezando…');
-  countdown('Calibración baseline', () => {
-    engine.startCalibration();
+  countdown(`Calibración ${calWeapon}`, () => {
+    engine.startCalibration(calWeapon);
     calBaselineActive = true;
-    overlayCal(`Hacé ${TARGET_SPRAYS} sprays (cualquier ráfaga) — 0/${TARGET_SPRAYS}`);
+    overlayCal(`${calWeapon}: hacé ${TARGET_SPRAYS} sprays — 0/${TARGET_SPRAYS}`);
     stopCalInterval();
     calInterval = setTimeout(() => { if (calBaselineActive) finishBaseline(); }, 60000); // safety
   });
@@ -207,10 +214,10 @@ function finishBaseline(): void {
   calBaselineActive = false;
   stopCalInterval();
   try {
-    const baseline = engine.finishCalibration();
-    overlayCal('Baseline calibrado ✓', true);
-    sendToConfig('cal-spray-result', { baseline });
-    log('CAL baseline derivado: ' + JSON.stringify(baseline));
+    const result = engine.finishCalibration(); // { weapon, baseline }
+    overlayCal(`Baseline ${result.weapon} ✓`, true);
+    sendToConfig('cal-spray-result', result);
+    log('CAL baseline ' + result.weapon + ': ' + JSON.stringify(result.baseline));
   } catch (err: any) {
     overlayCal('Pocos sprays, repetí', true);
     sendToConfig('cal-spray-result', { error: (err && err.message) || 'error' });
@@ -234,11 +241,11 @@ function openWindow(name: string, cb?: () => void): void {
 }
 
 function openOverlay(): void {
-  openWindow('in_game', () => { overlayVisible = true; log('overlay abierto'); setTimeout(sendOverlayScale, 300); });
+  openWindow('in_game', () => { overlayVisible = true; log('overlay abierto'); setTimeout(sendOverlayConfig, 300); });
 }
 
-function sendOverlayScale(): void {
-  overwolf.windows.sendMessage('in_game', 'scale', { scale: overlayScale }, () => {});
+function sendOverlayConfig(): void {
+  overwolf.windows.sendMessage('in_game', 'overlay-cfg', { scale: overlayScale, maxItems: overlayMaxItems }, () => {});
 }
 
 function toggleOverlay(): void {

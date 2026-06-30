@@ -2,18 +2,17 @@
 
 interface Feedback { prio: number; msg: string; }
 
+let maxItems = 3; // cantidad de últimos errores a mostrar (configurable)
+
+// Lista PERSISTENTE de los últimos N feedbacks (el más nuevo arriba; los viejos se descartan).
 function show(f: Feedback): void {
-  const wrap = document.getElementById('wrap');
-  if (!wrap) return;
+  const list = document.getElementById('items');
+  if (!list) return;
   const el = document.createElement('div');
   el.className = 'fb' + (f.prio <= 25 ? ' good' : '');
   el.textContent = f.msg;
-  wrap.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => {
-    el.classList.remove('show');
-    setTimeout(() => el.remove(), 300);
-  }, 6500);
+  list.insertBefore(el, list.firstChild);
+  while (list.children.length > maxItems) list.removeChild(list.lastChild as Node);
 }
 
 let calClearTimer: any = null;
@@ -47,7 +46,10 @@ overwolf.windows.onMessageReceived.addListener((message: any) => {
   if (message.id === 'feedback' && message.content) show(message.content as Feedback);
   else if (message.id === 'cal' && message.content) showCal(message.content.text, !!message.content.done);
   else if (message.id === 'flick' && message.content) showFlick(message.content.type);
-  else if (message.id === 'scale' && message.content) setScale(message.content.scale);
+  else if (message.id === 'overlay-cfg' && message.content) {
+    setScale(message.content.scale);
+    if (typeof message.content.maxItems === 'number') maxItems = Math.max(1, message.content.maxItems);
+  }
 });
 
 // Self-test: confirma que el overlay renderiza dentro del juego.

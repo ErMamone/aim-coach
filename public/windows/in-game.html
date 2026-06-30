@@ -5,7 +5,10 @@
   <title>Aim Coach overlay</title>
   <style>
     html, body { margin: 0; background: transparent; overflow: hidden; font-family: system-ui, 'Segoe UI', sans-serif; }
-    #wrap { padding: 10px; transform: scale(var(--scale, 1)); transform-origin: top left; }
+    /* ancho base FIJO: el contenido se maqueta a 450px y la escala lo agranda parejo
+       (sin esto, la escala se aplicaba dos veces y el texto se cortaba). */
+    #wrap { width: 450px; box-sizing: border-box; padding: 10px; transform: scale(var(--scale, 1)); transform-origin: top left; }
+    .fb, #cal, #badge, #flick { max-width: 100%; box-sizing: border-box; word-wrap: break-word; }
     #flick {
       display: none; font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 20px;
       margin-bottom: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.4); color: #12141a;
@@ -22,10 +25,8 @@
     .fb {
       background: rgba(18, 20, 26, .92); border-left: 3px solid #5b8cff; color: #e6e8ec;
       border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; line-height: 1.35;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, .4); opacity: 0; transform: translateY(-6px);
-      transition: opacity .25s, transform .25s;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, .4);
     }
-    .fb.show { opacity: 1; transform: none; }
     .fb.good { border-left-color: #3ecf8e; }
     #cal {
       display: none; background: rgba(91, 140, 255, .95); color: #fff;
@@ -40,6 +41,7 @@
     <div id="badge">Aim Coach · overlay (in-game)</div>
     <div id="cal"></div>
     <div id="flick"></div>
+    <div id="items"></div>
   </div>
 </body>
 </html>

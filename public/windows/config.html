@@ -20,7 +20,8 @@
     section { margin-bottom: 22px; }
     section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #8b90a0; margin: 0 0 10px; }
     label { display: block; font-size: 12px; color: #b6bccb; margin: 8px 0 3px; }
-    input[type=number] { width: 120px; background: #1b1e27; border: 1px solid #2a2f3d; color: #e6e8ec; border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+    input[type=number], select { width: 120px; background: #1b1e27; border: 1px solid #2a2f3d; color: #e6e8ec; border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+    select { width: 160px; }
     .readout { font-size: 12px; color: #8b90a0; margin-top: 8px; line-height: 1.6; }
     .readout b { color: #e6e8ec; }
     button { background: #5b8cff; color: #fff; border: 0; border-radius: 6px; padding: 7px 12px; font-size: 13px; font-weight: 600; cursor: pointer; margin: 6px 6px 0 0; }
@@ -73,6 +74,14 @@
       </section>
 
       <section>
+        <h2>Overlay (tamaño y cantidad)</h2>
+        <label>Tamaño del overlay in-game: <span id="overlayScaleVal">1.0×</span></label>
+        <input type="range" id="overlayScale" min="0.7" max="3" step="0.1" value="1" />
+        <label>Cantidad de errores a mostrar (últimos N)</label>
+        <input type="number" id="overlayMaxItems" min="1" max="10" step="1" value="3" />
+      </section>
+
+      <section>
         <h2>Calibración · giro 360</h2>
         <div class="readout">Disparala (botón o <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> en partida): cuenta regresiva en el overlay, girás UNA vuelta limpia, se mide sola.</div>
         <button id="cal360Start">Calibrar 360 (in-game)</button>
@@ -80,14 +89,27 @@
       </section>
 
       <section>
-        <h2>Calibración · baseline (sprays)</h2>
-        <div class="readout">Disparala (botón o <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> en partida): ventana de 30s para sprayear en el Range, deriva tu referencia sola.</div>
-        <button id="calSprayStart">Calibrar baseline (30s)</button>
+        <h2>Calibración · baseline POR ARMA</h2>
+        <div class="readout">Cada arma sprayea distinto: calibrá una por una. Elegí el arma, entrá al Range con ESA arma, y hacé 5 sprays (cualquier ráfaga) — termina solo.</div>
+        <label>Arma a calibrar</label>
+        <select id="calWeapon">
+          <option value="vandal">Vandal</option>
+          <option value="phantom">Phantom</option>
+          <option value="spectre">Spectre</option>
+          <option value="bulldog">Bulldog</option>
+          <option value="guardian">Guardian</option>
+          <option value="stinger">Stinger</option>
+          <option value="ares">Ares</option>
+          <option value="odin">Odin</option>
+        </select>
+        <br />
+        <button id="calSprayStart">Calibrar arma seleccionada</button>
+        <span class="hint" style="margin-left:0;">o <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> en partida</span>
         <div class="status" id="calSprayStatus"></div>
       </section>
 
       <section>
-        <h2>Baseline actual</h2>
+        <h2>Baselines por arma</h2>
         <div class="baseline" id="baselineView">—</div>
       </section>
 
@@ -99,5 +121,9 @@
 
     <div id="log"></div>
   </div>
+
+  <div class="resize-grip r" id="gripR"></div>
+  <div class="resize-grip b" id="gripB"></div>
+  <div class="resize-grip br" id="gripBR"></div>
 </body>
 </html>
