@@ -7,6 +7,7 @@
 // Salida: feedback que se superficie solo en huecos muertos (post-muerte / fin ronda / buy).
 
 const { sprayGestureQuality, BaselineCalibrator } = require('./calibration');
+const recoil = require('./recoil');
 
 // baseline por defecto (placeholder hasta que el usuario calibre). Valores conservadores.
 const DEFAULT_BASELINE = {
@@ -18,14 +19,21 @@ const DEFAULT_BASELINE = {
 const AUTO_FIRE_MS = 110;          // hold mas largo que esto = ya no es tap simple
 const SUSTAINED_MS = 350;          // hold mas largo que esto = spray sostenido (recoil real). Entre medio = miniburst
 const DEDUP_MS = 12000;            // no repetir el MISMO tipo de mensaje antes de este tiempo
+const COUNTER_STRAFE_MS = 100;     // frenar la tecla hasta ~100ms antes del tiro = contra-strafe real (bien)
+const STATIC_MS = 1000;            // sin moverte por mas de esto al disparar = ESTATICO (predecible)
+const KILL_AFTER_SHOT_MS = 1500;   // kill dentro de esto tras un tiro -> se atribuye a ese contexto de movimiento
+const MOVE_SHOT_RATIO = 0.5;       // fraccion de tiros de un tipo para avisar
 const SPAM_ICI_MS = 90;            // inter-click interval por debajo = sintoma de spam
 const CORRECTION_WINDOW_MS = 90;   // ventana post-click para medir el ajuste del flick
 const FLICK_ERR_COUNTS = 10;       // piso de |ajuste| tolerado (counts) — abajo de esto siempre "perfecto"
 const FLICK_ERR_RATIO = 0.14;      // tolerancia como % del recorrido del flick (flicks largos toleran mas)
 const MIN_FLICK_MAG = 35;          // recorrido minimo (counts) para que un tap cuente como flick real
+const FLICK_MAX_ADJ_RATIO = 1.5;   // si |ajuste| > este x el flick, no es correccion sino el flick SIGUIENTE -> se descarta
 const FAST_FLICK_MS = 160;         // flick mas rapido que esto = reactivo: el pulso mete micro-desvios, se tolera mas
 const FAST_FLICK_TOL = 2.0;        // multiplicador de tolerancia para flicks rapidos
 const SLOW_FLICK_MS = 250;         // solo flicks deliberados (mas lentos que esto) se juzgan por "estabilizar"
+const FLICK_SLOW_MS = 300;         // en-target pero mas lento que esto (+ margen por distancia) = "lento", no "perfecto"
+const FLICK_SLOW_PER_COUNT = 0.15; // margen extra de tiempo por count de recorrido (flicks grandes tardan mas)
 const FLICK_STREAK_N = 8;          // flicks flojos/pasados seguidos (reales) -> recomendar cambiar sens
 const MACRO_WINDOW_MS = 150;       // ventana para detectar rafaga de clicks inhumana
 const MACRO_CLICKS = 5;            // clicks dentro de la ventana = posible macro / mouse defectuoso
@@ -37,8 +45,12 @@ class AimCoachEngine {
     this.onFeedback = opts.onFeedback || (() => {});
     this.onCalProgress = opts.onCalProgress || (() => {}); // feedback de calibracion
     this.onFlick = opts.onFlick || (() => {});             // clasificacion por flick (flojo/perfecto/pasado)
+    this.onStrafe = opts.onStrafe || (() => {});           // info de movimiento por tiro (para debug/tuneo)
     this.baselines = opts.baselines || {};                 // baseline POR ARMA: { vandal: {...}, phantom: {...} }
     this._calWeapon = null;                                // arma que se esta calibrando
+    this._countsPerDegree = 0;                             // conversion counts<->grados (de la sens del usuario)
+    this._recoilRefs = opts.recoilRefs || {};             // curva de recoil de referencia POR ARMA (grados)
+    this._calCurves = [];                                  // curvas capturadas durante la calibracion
 
     this._flickStreakType = null;  // racha de flicks del mismo error (flojo|pasado)
     this._flickStreakCount = 0;
@@ -46,6 +58,11 @@ class AimCoachEngine {
     this._lowStreak = 0;           // rondas seguidas pegando a las piernas/abajo
     this._chestStreak = 0;         // rondas seguidas pegando al pecho (no cabeza)
     this._recentMsgs = {};         // {key: timestamp} para no repetir el mismo tipo de mensaje
+    this._keys = {};               // teclas de teclado actualmente presionadas (WASD/QECXF/...)
+    this._moveStopT = 0;           // ultimo momento en que soltaste TODAS las teclas de movimiento
+    this._lastKillT = 0;           // para correlacionar el evento headshot con el kill reciente
+    this._killCount = 0;           // kills de la sesion (para el % de headshots)
+    this._hsKillCount = 0;         // kills a la cabeza
 
     // medicion del gesto del flick (para evaluar segun velocidad/magnitud, no parejo)
     this._approachActive = false;
@@ -76,6 +93,11 @@ class AimCoachEngine {
 
   // Carga todos los baselines por arma (desde la config guardada).
   setBaselines(map) { this.baselines = map || {}; }
+  // Conversion de sens (counts por grado) para el scoring de recoil.
+  setSens(countsPerDegree) { this._countsPerDegree = countsPerDegree || 0; }
+  // Referencias de recoil por arma (auto-capturadas o dataminadas).
+  setRecoilRefs(map) { this._recoilRefs = map || {}; }
+  _recoilRef(weapon) { return this._recoilRefs[weapon] || recoil.PATTERNS[weapon] || null; }
 
   // Baseline del arma equipada (cae al default si esa arma no fue calibrada).
   _activeBaseline() {
@@ -88,15 +110,19 @@ class AimCoachEngine {
     this._calWeapon = weapon || 'generic';
     this._calibrator = new BaselineCalibrator();
     this._calibrating = true;
+    this._calCurves = [];
   }
-  // Deriva el baseline, lo guarda bajo el arma calibrada y lo devuelve. Lanza si < 3 sprays.
+  // Deriva el baseline + la referencia de recoil, los guarda bajo el arma y los devuelve.
   finishCalibration() {
     this._calibrating = false;
     const baseline = this._calibrator.build();
     this._calibrator = null;
     const weapon = this._calWeapon || 'generic';
     this.baselines[weapon] = { ...DEFAULT_BASELINE, ...baseline };
-    return { weapon, baseline };
+    const recoilRef = recoil.buildReference(this._calCurves);
+    if (recoilRef) this._recoilRefs[weapon] = recoilRef;
+    this._calCurves = [];
+    return { weapon, baseline, recoilRef };
   }
   cancelCalibration() {
     this._calibrating = false;
@@ -107,7 +133,8 @@ class AimCoachEngine {
   }
 
   _emptyRound() {
-    return { sprays: [], flicks: [], taps: 0, shortICIs: 0, overshoots: [], flickClasses: [], report: null };
+    return { sprays: [], flicks: [], taps: 0, shortICIs: 0, overshoots: [], flickClasses: [],
+             shots: 0, shotsMoving: 0, shotsCounter: 0, shotsStatic: 0, kills: 0, killsGood: 0, abilities: {}, report: null };
   }
 
   // -------- entradas --------
@@ -144,6 +171,56 @@ class AimCoachEngine {
     else if (ev.a === 'move') this._onMove(ev);
   }
 
+  // Teclado (WASD movimiento, QECXF habilidades). ev: {t, type:'key', a:'down'|'up', k}
+  pushKey(ev) {
+    if (ev.a === 'down') {
+      this._keys[ev.k] = ev.t;
+      if (ev.k === 'q' || ev.k === 'e' || ev.k === 'c' || ev.k === 'x') this._round.abilities[ev.k] = true;
+    } else if (ev.a === 'up') {
+      delete this._keys[ev.k];
+      if (this._isMoveKey(ev.k) && !this._anyMoveHeld()) this._moveStopT = ev.t;
+    }
+  }
+  _isMoveKey(k) { return k === 'w' || k === 'a' || k === 's' || k === 'd'; }
+  _anyMoveHeld() { return !!(this._keys.w || this._keys.a || this._keys.s || this._keys.d); }
+
+  // Headshot de GEP (llega justo despues del kill si fue a la cabeza).
+  pushHeadshot() {
+    if (Date.now() - this._lastKillT < 800) this._hsKillCount++;
+  }
+
+  // Cada N kills, evalua el % a la cabeza (placement REAL por kill).
+  _evalHsRate() {
+    const rate = this._hsKillCount / this._killCount;
+    if (rate < 0.3) {
+      this._queue(66, 'Pocos headshots — subí la mira', `${Math.round(rate * 100)}% de tus kills a la cabeza (${this._hsKillCount}/${this._killCount}). Pre-aimeá a altura de cabeza.`, 'hs-rate');
+    } else if (rate >= 0.5) {
+      this._queue(30, `Buenos headshots ✓ (${Math.round(rate * 100)}%)`, `${this._hsKillCount}/${this._killCount} kills a la cabeza. Mantené esa altura de mira.`, 'hs-rate');
+    }
+    this._surface();
+  }
+
+  // Kill de GEP: se atribuye al contexto de movimiento del ultimo tiro reciente (validacion por resultado).
+  // Devuelve la clase (para loguear) y superficie feedback inmediato.
+  pushKill() {
+    this._round.kills++;
+    this._killCount++;
+    this._lastKillT = Date.now();
+    if (this._killCount % 5 === 0) this._evalHsRate();
+    const ls = this._lastStrafe;
+    const recent = ls && (Date.now() - ls.wall) < KILL_AFTER_SHOT_MS;
+    const cls = recent ? ls.class : 'sin-tiro-reciente';
+    if (recent && (ls.class === 'counter' || ls.class === 'moviendo')) {
+      this._round.killsGood++;
+      this._queue(35, 'Kill en movimiento ✓', `Kill ${ls.class === 'counter' ? 'counter-strafeando' : 'moviéndote'} — móvil y preciso.`, 'kill-good');
+      this._surface();
+    } else if (recent && ls.class === 'quieto') {
+      this._queue(34, 'Kill quieto — movete más', 'Mataste parado: bien, pero sos predecible.', 'kill-static');
+      this._surface();
+    }
+    return cls;
+  }
+
   // round_report de Valorant: solo lo guardamos (alimenta R6); el flush decide cuando mostrar.
   pushRoundReport(report) {
     this._round.report = report;
@@ -156,7 +233,7 @@ class AimCoachEngine {
     this._recentSpeed = 0.6 * this._recentSpeed + 0.4 * (dist / dt);
     this._lastMoveT = ev.t;
     this._lastDx = ev.dx;
-    if (this._leftDown) this._holdMoves.push({ dy: ev.dy });
+    if (this._leftDown) this._holdMoves.push({ t: ev.t, dx: ev.dx, dy: ev.dy });
 
     // medir el "flick" (recorrido y duracion desde que arrancó a moverse estando quieto)
     if (!this._leftDown && !this._correction) {
@@ -184,11 +261,32 @@ class AimCoachEngine {
     }
     this._lastClickT = ev.t;
     this._checkMacro(ev.t);
+
+    // strafe: clasificar el CONTEXTO de movimiento del tiro
+    this._round.shots++;
+    const moving = this._anyMoveHeld();
+    const sinceStop = this._moveStopT ? (ev.t - this._moveStopT) : 999999;
+    let sclass;
+    if (moving) { sclass = 'moviendo'; this._round.shotsMoving++; }                    // disparaste caminando (impreciso)
+    else if (this._moveStopT && sinceStop < COUNTER_STRAFE_MS) { sclass = 'counter'; this._round.shotsCounter++; } // frenaste justo antes (ideal)
+    else if (sinceStop > STATIC_MS) { sclass = 'quieto'; this._round.shotsStatic++; }   // parado hace rato (predecible)
+    else sclass = 'ok';                                                                 // parado hace poco, normal
+    this._lastStrafe = { class: sclass, wall: Date.now() };
+    // Solo emitimos info de strafe cuando hubo MOVIMIENTO reciente (moviéndote o frenaste hace poco).
+    // Tiros totalmente parados/de espera no generan evento de strafe (era ruido).
+    if (moving || sinceStop < STATIC_MS) {
+      this.onStrafe({ class: sclass, sinceStop, keys: ['w', 'a', 's', 'd'].filter(k => this._keys[k]).join('') });
+    }
+
     this._approachSign = Math.sign(this._lastDx || 0);
     this._settledAtClick = this._recentSpeed < 0.15;
     // duracion y recorrido del flick que termino en este click
     this._flickDur = this._approachActive ? (ev.t - this._approachStartT) : 0;
     this._flickMag = this._approachDist || 0;
+    // reset: el PROXIMO flick se mide desde este disparo (si no, al flickear sin parar
+    // se acumula infinito porque nunca te quedás quieto).
+    this._approachActive = false;
+    this._approachDist = 0;
 
     this._leftDown = true;
     this._holdStart = ev.t;
@@ -206,10 +304,16 @@ class AimCoachEngine {
       if (q && durationMs >= SUSTAINED_MS) {
         this._round.sprays.push({ ...q, durationMs, pullPerMs: q.totalPull / durationMs });
       }
-      // en calibracion sí tomamos cualquier ráfaga (>=AUTO_FIRE_MS) para el baseline
-      if (q && this._calibrating && this._calibrator) {
-        this._calibrator.addSpray(this._holdMoves, durationMs);
-        this.onCalProgress({ sprays: this._calibrator.sprays.length });
+      if (this._calibrating && this._calibrator) {
+        // baseline: cualquier ráfaga
+        if (q) { this._calibrator.addSpray(this._holdMoves, durationMs); this.onCalProgress({ sprays: this._calibrator.sprays.length }); }
+        // recoil: capturar la curva de compensación de los sprays sostenidos
+        if (durationMs >= SUSTAINED_MS && this._countsPerDegree) {
+          const curve = recoil.curveFromHold(this._holdMoves, this._holdStart, this._calWeapon, this._countsPerDegree);
+          if (curve) this._calCurves.push(curve);
+        }
+      } else if (durationMs >= SUSTAINED_MS && this._countsPerDegree) {
+        this._scoreRecoil(); // spray en vivo -> puntuar contra la referencia
       }
     } else {
       // tap -> abrir ventana para medir el ajuste del flick (guardamos duracion y magnitud)
@@ -229,6 +333,10 @@ class AimCoachEngine {
     // Si no hubo un flick real (casi no te moviste: ya estabas en el objetivo), no se juzga.
     if ((c.flickMag || 0) < MIN_FLICK_MAG) return;
 
+    // Si el "ajuste" es mucho mayor que el flick, no es una correccion: es el movimiento
+    // hacia el SIGUIENTE objetivo capturado por la ventana. No se clasifica (evita falsos).
+    if (Math.abs(c.netDx) > c.flickMag * FLICK_MAX_ADJ_RATIO) return;
+
     // aligned > 0: seguiste hacia el objetivo despues del tap = corto (FLOJO)
     // aligned < 0: volviste en sentido opuesto = te pasaste (PASADO)
     const aligned = c.netDx * c.approachSign;
@@ -241,7 +349,11 @@ class AimCoachEngine {
     let type;
     if (aligned > threshold) type = 'flojo';
     else if (aligned < -threshold) type = 'pasado';
-    else type = 'perfecto';
+    else {
+      // en target: es "perfecto" solo si ademas fue RAPIDO. Si tardo mucho, "lento" (llegaste bien pero tarde).
+      const slowMs = FLICK_SLOW_MS + c.flickMag * FLICK_SLOW_PER_COUNT;
+      type = (c.flickDur > slowMs) ? 'lento' : 'perfecto';
+    }
 
     // overshoot (con signo) para R4 y para la calibracion de baseline
     const overshoot = aligned < 0 ? Math.abs(c.netDx) * c.approachSign : 0;
@@ -261,8 +373,8 @@ class AimCoachEngine {
     // etiqueta en vivo del flick (solo en practica: en partida distrae). Incluye metricas para el log de debug.
     if (this._timing === 'instant') this.onFlick({ type, ...(info || {}) });
 
-    // racha de flojos/pasados seguidos
-    if (type === 'flojo' || type === 'pasado') {
+    // racha del mismo error seguido (flojo | pasado | lento)
+    if (type === 'flojo' || type === 'pasado' || type === 'lento') {
       if (this._flickStreakType === type) this._flickStreakCount++;
       else { this._flickStreakType = type; this._flickStreakCount = 1; }
     } else {
@@ -270,11 +382,19 @@ class AimCoachEngine {
     }
 
     if (this._flickStreakCount >= FLICK_STREAK_N) {
-      // Ya descontamos pulso/velocidad (flicks rapidos y micro-desvios no cuentan):
-      // si aun asi son N seguidos del mismo lado, es PATRON de sens, no error puntual.
-      const short = type === 'pasado' ? 'Bajá la sens ~10% — te pasás seguido' : 'Subí la sens ~10% — te quedás corto';
-      const detail = `${FLICK_STREAK_N} flicks ${type === 'pasado' ? 'pasados' : 'flojos'} seguidos (ya descartando pulso/velocidad): es patrón de sens, no error puntual.`;
-      this._queue(95, short, detail, 'sens-rec');
+      // Ya descontamos pulso/velocidad: si son N seguidos del mismo tipo, es un PATRON, no error puntual.
+      let short, detail;
+      if (type === 'pasado') {
+        short = 'Bajá la sens ~10% — te pasás seguido';
+        detail = `${FLICK_STREAK_N} flicks pasados seguidos (ya descartando pulso): patrón de sens, no error puntual.`;
+      } else if (type === 'flojo') {
+        short = 'Subí la sens ~10% — te quedás corto';
+        detail = `${FLICK_STREAK_N} flicks flojos seguidos (ya descartando pulso): patrón de sens, no error puntual.`;
+      } else {
+        short = 'Sé más rápido — apuntá y dispará, no trackees';
+        detail = `${FLICK_STREAK_N} flicks lentos seguidos: llegás bien pero tarde. Snap al objetivo, no lo persigas.`;
+      }
+      this._queue(95, short, detail, type === 'lento' ? 'speed-rec' : 'sens-rec');
       if (this._timing === 'instant') this._surface();
       this._flickStreakCount = 0; // evitar repetir cada flick
     }
@@ -290,6 +410,23 @@ class AimCoachEngine {
       this._surface();
       this._recentClicks = [];
     }
+  }
+
+  // Puntúa un spray sostenido contra la referencia de recoil del arma equipada.
+  _scoreRecoil() {
+    const ref = this._recoilRef(this.weapon);
+    if (!ref) return;
+    const curve = recoil.curveFromHold(this._holdMoves, this._holdStart, this.weapon, this._countsPerDegree);
+    const res = recoil.scoreSpray(curve, ref);
+    if (!res) return;
+    if (res.score >= 90) {
+      this._queue(28, `Recoil dominado (${res.score}%)`, `Control de recoil ${res.score}% vs tu referencia. Así.`, 'recoil-score');
+    } else if (res.score < 70) {
+      const where = res.phase === 'horizontal' ? 'el tramo horizontal (contrá el spread)' : 'el pull vertical (bajá más parejo)';
+      this._queue(75, `Recoil ${res.score}% — mejorá ${res.phase === 'horizontal' ? 'el horizontal' : 'el pull'}`,
+        `Control ${res.score}%: te desviaste en ${where}.`, 'recoil-score');
+    }
+    if (this._timing === 'instant') this._surface();
   }
 
   // -------- reglas (todas relativas al baseline personal) --------
@@ -339,11 +476,37 @@ class AimCoachEngine {
     if (fc.length >= 3) {
       const flojo = fc.filter(t => t === 'flojo').length;
       const pasado = fc.filter(t => t === 'pasado').length;
+      const lento = fc.filter(t => t === 'lento').length;
       const ok = fc.filter(t => t === 'perfecto').length;
-      if (flojo + pasado > ok) {
-        const short = pasado >= flojo ? 'En general te pasás — frená el flick' : 'En general te quedás corto — llegá más';
-        this._queue(65, short, `Flicks: ${ok} perfectos · ${flojo} flojos · ${pasado} pasados.`, 'flick-summary');
+      if (flojo + pasado + lento > ok) {
+        // el peor problema define el consejo
+        let short;
+        if (lento >= flojo && lento >= pasado) short = 'Sé más rápido con los flicks';
+        else if (pasado >= flojo) short = 'En general te pasás — frená el flick';
+        else short = 'En general te quedás corto — llegá más';
+        this._queue(65, short, `Flicks: ${ok} perfectos · ${flojo} flojos · ${pasado} pasados · ${lento} lentos.`, 'flick-summary');
       }
+    }
+
+    // R8: contexto de movimiento al disparar.
+    if (r.shots >= 6) {
+      if (r.shotsMoving / r.shots > MOVE_SHOT_RATIO) {
+        this._queue(80, 'Frená al disparar (counter-strafe)',
+          `${r.shotsMoving}/${r.shots} tiros caminando. Movete, pero soltá/revertí la tecla un instante antes de tirar.`, 'strafe-move');
+      } else if (r.shotsStatic / r.shots > 0.6) {
+        this._queue(78, 'Te estás quedando quieto — movete',
+          `${r.shotsStatic}/${r.shots} tiros parado. Sos predecible: movete entre disparos y counter-strafeá.`, 'strafe-static');
+      }
+    }
+    // Refuerzo positivo: kills counter-strafeando (móvil + preciso = lo ideal).
+    if (r.killsGood >= 2) {
+      this._queue(30, `Buenos kills en movimiento (${r.killsGood})`,
+        `Mataste counter-strafeando ${r.killsGood} veces. Eso es lo ideal: móvil y preciso.`, 'strafe-kill');
+    }
+
+    // Habilidades: nudge SOLO en partidas (en práctica molestaría). Si no usaste ninguna.
+    if (this._timing !== 'instant' && Object.keys(r.abilities).length === 0 && r.shots >= 3) {
+      this._queue(40, 'No usaste habilidades', 'Recordá usar tus habilidades (Q/E/C/X) — inflan tu impacto en la ronda.', 'abilities');
     }
 
     // R6: round_report de Overwolf -> crosshair placement (ancla de resultado, grueso)

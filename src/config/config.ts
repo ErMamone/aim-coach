@@ -16,6 +16,7 @@ interface AppConfig {
   debugFlicks?: boolean;
   calWeapon?: string;
   baselines?: { [weapon: string]: any };
+  recoilRefs?: { [weapon: string]: any };
 }
 
 function loadConfig(): AppConfig {
@@ -181,10 +182,14 @@ overwolf.windows.onMessageReceived.addListener((m: any) => {
       if (m.content && m.content.baseline && m.content.weapon) {
         if (!config.baselines) config.baselines = {};
         config.baselines[m.content.weapon] = m.content.baseline;
+        if (m.content.recoilRef) {
+          if (!config.recoilRefs) config.recoilRefs = {};
+          config.recoilRefs[m.content.weapon] = m.content.recoilRef;
+        }
         saveConfig(config);
         applyToBackground();
         renderBaseline();
-        setStatus('calSprayStatus', `Baseline de ${m.content.weapon} calibrado y guardado.`, 'ok');
+        setStatus('calSprayStatus', `Baseline${m.content.recoilRef ? ' + recoil' : ''} de ${m.content.weapon} calibrado y guardado.`, 'ok');
       } else {
         setStatus('calSprayStatus', 'No se pudo: ' + (m.content && m.content.error), 'err');
       }

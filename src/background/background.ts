@@ -5,7 +5,7 @@
 // require lo provee webpack al bundlear (corremos en el Chromium de Overwolf, no en Node).
 declare function require(module: string): any;
 const { AimCoachEngine } = require('../engine/ruleEngine');
-const { verify360 } = require('../engine/calibration');
+const { verify360, sensMath } = require('../engine/calibration');
 
 const VALORANT_ID = 21640;
 const GEP_FEATURES = ['game_info', 'me', 'match_info', 'kill', 'death', 'gep_internal'];
@@ -59,9 +59,15 @@ function start(): void {
   engine = new AimCoachEngine({
     onFeedback: (f: any) => showFeedback(f),
     onFlick: (info: any) => overlayFlick(info),
+    onStrafe: (info: any) => {
+      if (debugFlicks) {
+        log(`STRAFE ${info.class}${info.keys ? '(' + info.keys + ')' : ''} · sinceStop ${info.sinceStop}ms`);
+      }
+    },
     onCalProgress: (p: any) => onCalSprayProgress(p),
   });
   loadSavedConfig();
+  applySens();
   log('background iniciado');
   // Overlay-first: la config solo se abre sola si falta setup (ruta del capturer).
   // En uso normal todo va por el overlay + hotkeys. Abrila cuando quieras con Ctrl+Shift+C.
@@ -78,12 +84,17 @@ function sendToConfig(id: string, content: any): void {
   overwolf.windows.sendMessage('config', id, content, () => {});
 }
 
+function applySens(): void {
+  try { engine.setSens(sensMath(dpi, sens).countsPerDegree); } catch (_) {}
+}
+
 function loadSavedConfig(): void {
   try {
     const saved = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null');
     if (!saved) return;
     if (typeof saved.dpi === 'number') dpi = saved.dpi;
     if (typeof saved.sens === 'number') sens = saved.sens;
+    if (saved.recoilRefs) engine.setRecoilRefs(saved.recoilRefs);
     if (typeof saved.capturerPath === 'string') capturerPath = saved.capturerPath;
     if (typeof saved.overlayScale === 'number') overlayScale = saved.overlayScale;
     if (typeof saved.overlayMaxItems === 'number') overlayMaxItems = saved.overlayMaxItems;
@@ -108,6 +119,8 @@ function onConfigMessage(m: any): void {
       if (m.content) {
         if (typeof m.content.dpi === 'number') dpi = m.content.dpi;
         if (typeof m.content.sens === 'number') sens = m.content.sens;
+        if (typeof m.content.dpi === 'number' || typeof m.content.sens === 'number') applySens();
+        if (m.content.recoilRefs) engine.setRecoilRefs(m.content.recoilRefs);
         if (typeof m.content.capturerPath === 'string') capturerPath = m.content.capturerPath;
         if (typeof m.content.overlayScale === 'number') overlayScale = m.content.overlayScale;
         if (typeof m.content.overlayMaxItems === 'number') overlayMaxItems = m.content.overlayMaxItems;
@@ -401,13 +414,14 @@ function handleInfoUpdate(payload: any): void {
 
 // Práctica (Range) -> feedback instantáneo (timer). Resto -> feedback al morir.
 function updateTiming(gameMode: string, scene: string): void {
-  const practice = gameMode === 'Range' || scene === 'Range';
-  const newTiming = practice ? 'instant' : 'onDeath';
+  // Range y Deathmatch = accion continua -> feedback en vivo. Resto (bomb/swift/etc.) = al final de ronda.
+  const live = gameMode === 'Range' || scene === 'Range' || gameMode === 'Deathmatch';
+  const newTiming = live ? 'instant' : 'onDeath';
   if (newTiming === timing) return;
   timing = newTiming;
   engine.setFeedbackTiming(timing);
   manageInstantTimer();
-  const msg = practice ? 'Modo práctica — feedback en vivo' : 'Modo partida — feedback al morir';
+  const msg = live ? 'Feedback en vivo' : 'Modo partida — feedback al final de ronda';
   overlayCal(msg, true);
   log('TIMING: ' + msg + (gameMode ? ' (mode ' + gameMode + ')' : '') + (scene ? ' (scene ' + scene + ')' : ''));
 }
@@ -422,7 +436,10 @@ function handleGameEvents(payload: any): void {
   const events = (payload && payload.events) || [];
   for (const ev of events) {
     if (!ev || !ev.name) continue;
+    if (debugFlicks) log('GEP-EVENT ' + ev.name + (ev.data !== undefined ? ' = ' + safe(ev.data).slice(0, 100) : ''));
     if (ev.name === 'match_info' && ev.data) tryRoundReport(ev.data);
+    if (ev.name === 'kill') { const cls = engine.pushKill(); log('KILL · contexto del tiro: ' + cls); }
+    if (ev.name === 'headshot') engine.pushHeadshot();
     if (ev.name === 'death') engine.setPhase('dead');
     if (ev.name === 'match_end') engine.setPhase('roundEnd');
   }
@@ -481,6 +498,7 @@ function connectMouseStream(): void {
   ws.onmessage = (msg: MessageEvent) => {
     try {
       const ev = JSON.parse(msg.data);
+      if (ev.type === 'key') { engine.pushKey(ev); return; }
       if (cal360Active && ev.a === 'move') cal360Sum += Math.abs(ev.dx);
       engine.pushMouse(ev);
       mouseCount++;
