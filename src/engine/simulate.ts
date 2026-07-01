@@ -1,17 +1,21 @@
-// simulate.js — alimenta el motor con un stream sintetico para verlo disparar reglas.
-const { AimCoachEngine } = require('./ruleEngine');
+/* simulate.ts — harness de dev: alimenta el motor con un stream sintético para verlo disparar reglas.
+ * Correr con: npx tsc src/engine/simulate.ts --outDir .tmp --rootDir src/engine --module commonjs
+ *   --target es2017 --esModuleInterop --skipLibCheck && node .tmp/simulate.js
+ */
+
+import { AimCoachEngine } from './ruleEngine';
 
 const engine = new AimCoachEngine({
   onFeedback: (f) => console.log(`  >> [prio ${f.prio}] ${f.msg}`),
 });
 
 let t = 0;
-const tick = (ms) => { t += ms; };
+const tick = (ms: number): void => { t += ms; };
 
 // helpers para inyectar eventos de mouse
-const move = (dx, dy) => engine.pushMouse({ t, dx, dy, a: 'move', b: 'none' });
+const move = (dx: number, dy: number) => engine.pushMouse({ t, dx, dy, a: 'move', b: 'none' });
 const down = () => engine.pushMouse({ t, dx: 0, dy: 0, a: 'down', b: 'left' });
-const up   = () => engine.pushMouse({ t, dx: 0, dy: 0, a: 'up',   b: 'left' });
+const up = () => engine.pushMouse({ t, dx: 0, dy: 0, a: 'up', b: 'left' });
 
 console.log('=== Ronda 1: jugador sub-compensa recoil en sprays con Vandal ===');
 engine.setWeapon('Vandal');
@@ -20,7 +24,7 @@ engine.setPhase('active');
 // dos sprays largos donde tira poco hacia abajo (sub-compensa: pullDy << expected)
 for (let s = 0; s < 2; s++) {
   down();
-  for (let i = 0; i < 30; i++) { tick(10); move(1, 1); } // 300ms de fuego, solo ~30px de pull (deberia ~105)
+  for (let i = 0; i < 30; i++) { tick(10); move(1, 1); } // 300ms de fuego, solo ~30px de pull (debería ~105)
   up();
   tick(400);
 }
@@ -32,11 +36,11 @@ console.log('\n=== Ronda 2: jugador spamea clicks y dispara sin estabilizar ==='
 engine.setWeapon('Sheriff');
 engine.setPhase('active');
 
-// 5 clicks muy seguidos (spam) mientras el mouse se mueve rapido (no estabiliza)
+// 5 clicks muy seguidos (spam) mientras el mouse se mueve rápido (no estabiliza)
 for (let i = 0; i < 5; i++) {
   move(40, 5); move(35, 3); // velocidad alta justo antes del click
   tick(20);
-  down(); tick(15); up();   // tap rapido, ICI ~35ms
+  down(); tick(15); up();   // tap rápido, ICI ~35ms
   tick(35);
 }
 engine.pushRoundReport({ damage: 150, hit: 3, headshot: 0, final_headshot: 1, bodyshots: 2, legshots: 0 });
@@ -45,7 +49,7 @@ console.log('\n=== Ronda 3: jugador limpio (control de recoil OK, buen placement
 engine.setWeapon('Phantom');
 engine.setPhase('active');
 down();
-for (let i = 0; i < 30; i++) { tick(10); move(1, 9); } // 300ms, ~270px pull (expected ~90 -> ratio alto pero un solo spray)
+for (let i = 0; i < 30; i++) { tick(10); move(1, 9); } // 300ms, ~270px pull
 up();
 tick(500);
 // tap estabilizado

@@ -2,10 +2,8 @@
 // Orquesta: deteccion de Valorant, GEP (eventos del juego), stream de mouse (WebSocket
 // del capturer C#), el motor de reglas, y las ventanas (config de escritorio + overlay in-game).
 
-// require lo provee webpack al bundlear (corremos en el Chromium de Overwolf, no en Node).
-declare function require(module: string): any;
-const { AimCoachEngine } = require('../engine/ruleEngine');
-const { verify360, sensMath } = require('../engine/calibration');
+import { AimCoachEngine } from '../engine/ruleEngine';
+import { verify360, sensMath } from '../engine/calibration';
 
 const VALORANT_ID = 21640;
 const GEP_FEATURES = ['game_info', 'me', 'match_info', 'kill', 'death', 'gep_internal'];
@@ -25,7 +23,9 @@ let overlayScale = 1;         // escala del TEXTO del overlay (ajustable desde c
 let overlayMaxItems = 3;      // cantidad de últimos errores a mostrar (ajustable desde config)
 let overlayWidthPct = 0.30;   // ancho del overlay como % de la pantalla del juego
 let overlayHeightPct = 0.45;  // alto del overlay como % de la pantalla del juego
-let debugFlicks = false;      // loguear métricas de cada flick (para tunear el motor)
+let overlayCorner = 'top-left'; // esquina donde se ancla el overlay
+let overlayOpacity = 1;       // opacidad del overlay (0.3–1)
+let debug = false;            // Modo Debugger: emite logs verbosos (mouse/GEP/strafe/flicks) y muestra el panel
 let calWeapon = 'vandal';     // arma seleccionada para calibrar (en el Range no se autodetecta)
 
 // estado del stream de mouse y de la calibracion del giro 360
@@ -48,11 +48,23 @@ function safe(a: any): string {
   try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (_) { return String(a); }
 }
 
-// Log a consola (dev tools) y a la ventana de config (para verlo sin abrir dev tools).
+// Buffer de logs para exportar (últimos LOG_RETENTION_MS). Guarda solo lo que efectivamente se logueó.
+const LOG_RETENTION_MS = 40 * 60 * 1000;
+const logBuffer: { t: number; line: string }[] = [];
+
+// Log normal: consola (dev tools) + ventana de config + buffer de exportación. Siempre visible.
 function log(msg: string, ...args: any[]): void {
   const line = msg + (args.length ? ' ' + args.map(safe).join(' ') : '');
   console.log('[AimCoach]', line);
+  const t = Date.now();
+  logBuffer.push({ t, line });
+  while (logBuffer.length && logBuffer[0].t < t - LOG_RETENTION_MS) logBuffer.shift();
   overwolf.windows.sendMessage('config', 'log', { line }, () => {});
+}
+
+// Log de debug (mouse, GEP-events, strafe, flicks): solo cuando el Modo Debugger está activo.
+function logDebug(msg: string): void {
+  if (debug) log(msg);
 }
 
 function start(): void {
@@ -60,9 +72,7 @@ function start(): void {
     onFeedback: (f: any) => showFeedback(f),
     onFlick: (info: any) => overlayFlick(info),
     onStrafe: (info: any) => {
-      if (debugFlicks) {
-        log(`STRAFE ${info.class}${info.keys ? '(' + info.keys + ')' : ''} · sinceStop ${info.sinceStop}ms`);
-      }
+      logDebug(`STRAFE ${info.class}${info.keys ? '(' + info.keys + ')' : ''} · sinceStop ${info.sinceStop == null ? '—' : info.sinceStop + 'ms'}`);
     },
     onCalProgress: (p: any) => onCalSprayProgress(p),
   });
@@ -100,8 +110,11 @@ function loadSavedConfig(): void {
     if (typeof saved.overlayMaxItems === 'number') overlayMaxItems = saved.overlayMaxItems;
     if (typeof saved.overlayWidthPct === 'number') overlayWidthPct = saved.overlayWidthPct;
     if (typeof saved.overlayHeightPct === 'number') overlayHeightPct = saved.overlayHeightPct;
-    if (typeof saved.debugFlicks === 'boolean') debugFlicks = saved.debugFlicks;
+    if (typeof saved.overlayCorner === 'string') overlayCorner = saved.overlayCorner;
+    if (typeof saved.overlayOpacity === 'number') overlayOpacity = saved.overlayOpacity;
+    if (typeof saved.debug === 'boolean') debug = saved.debug;
     if (typeof saved.calWeapon === 'string') calWeapon = saved.calWeapon;
+    engine.setPracticeWeapon(calWeapon); // fallback de arma para el Range (GEP no la da)
     if (saved.baselines) {
       engine.setBaselines(saved.baselines);
       log('baselines por arma cargados: ' + Object.keys(saved.baselines).join(', '));
@@ -124,12 +137,14 @@ function onConfigMessage(m: any): void {
         if (typeof m.content.capturerPath === 'string') capturerPath = m.content.capturerPath;
         if (typeof m.content.overlayScale === 'number') overlayScale = m.content.overlayScale;
         if (typeof m.content.overlayMaxItems === 'number') overlayMaxItems = m.content.overlayMaxItems;
-        if (typeof m.content.overlayScale === 'number' || typeof m.content.overlayMaxItems === 'number') sendOverlayConfig();
+        if (typeof m.content.overlayOpacity === 'number') overlayOpacity = m.content.overlayOpacity;
+        if (typeof m.content.overlayScale === 'number' || typeof m.content.overlayMaxItems === 'number' || typeof m.content.overlayOpacity === 'number') sendOverlayConfig();
         if (typeof m.content.overlayWidthPct === 'number') overlayWidthPct = m.content.overlayWidthPct;
         if (typeof m.content.overlayHeightPct === 'number') overlayHeightPct = m.content.overlayHeightPct;
-        if (typeof m.content.overlayWidthPct === 'number' || typeof m.content.overlayHeightPct === 'number') applyOverlaySize();
-        if (typeof m.content.debugFlicks === 'boolean') debugFlicks = m.content.debugFlicks;
-        if (typeof m.content.calWeapon === 'string') calWeapon = m.content.calWeapon;
+        if (typeof m.content.overlayCorner === 'string') overlayCorner = m.content.overlayCorner;
+        if (typeof m.content.overlayWidthPct === 'number' || typeof m.content.overlayHeightPct === 'number' || typeof m.content.overlayCorner === 'string') applyOverlaySize();
+        if (typeof m.content.debug === 'boolean') debug = m.content.debug;
+        if (typeof m.content.calWeapon === 'string') { calWeapon = m.content.calWeapon; engine.setPracticeWeapon(calWeapon); }
         if (m.content.baselines) engine.setBaselines(m.content.baselines);
         log('config aplicada (dpi ' + dpi + ', sens ' + sens + ', arma ' + calWeapon + ')');
         launchCapturer(); // por si recien configuraron la ruta
@@ -141,6 +156,12 @@ function onConfigMessage(m: any): void {
     case 'cal-spray-start':
       startCalBaseline();
       break;
+    case 'export-logs': {
+      // arma el texto de los últimos 40 min con timestamp y lo manda a la config para descargar.
+      const text = logBuffer.map(e => '[' + new Date(e.t).toLocaleTimeString() + '] ' + e.line).join('\n');
+      sendToConfig('logs-export', { text });
+      break;
+    }
   }
 }
 
@@ -228,6 +249,8 @@ function startCalBaseline(): void {
 function onCalSprayProgress(p: any): void {
   sendToConfig('cal-progress', p);
   if (!calBaselineActive) return;
+  // accepted === false -> el spray no pasó el gate de calidad (flojo/reposición): no cuenta.
+  if (p.accepted === false) { overlayCal(`Spray flojo, no cuenta — ${p.sprays}/${TARGET_SPRAYS}`); return; }
   overlayCal(`Sprays — ${p.sprays}/${TARGET_SPRAYS}`);
   if (p.sprays >= TARGET_SPRAYS) finishBaseline();
 }
@@ -251,9 +274,7 @@ function finishBaseline(): void {
 
 function overlayFlick(info: any): void {
   overwolf.windows.sendMessage('in_game', 'flick', { type: info.type }, () => {});
-  if (debugFlicks) {
-    log(`FLICK ${info.type} · dur ${info.dur}ms · mag ${info.mag} · ajuste ${info.aligned} (umbral ${info.threshold})`);
-  }
+  logDebug(`FLICK ${info.type} · dur ${info.dur}ms · mag ${info.mag} · ajuste ${info.aligned} (umbral ${info.threshold})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -274,22 +295,26 @@ function openOverlay(): void {
 }
 
 function sendOverlayConfig(): void {
-  overwolf.windows.sendMessage('in_game', 'overlay-cfg', { scale: overlayScale, maxItems: overlayMaxItems }, () => {});
+  overwolf.windows.sendMessage('in_game', 'overlay-cfg', { scale: overlayScale, maxItems: overlayMaxItems, opacity: overlayOpacity }, () => {});
 }
 
-// Tamaño del overlay = % de la resolución del juego (matchea cualquier pantalla).
+// Tamaño Y POSICIÓN del overlay = % de la resolución del juego (matchea cualquier pantalla).
+// La posición se ancla a la esquina elegida (con un margen), para no tapar el minimapa etc.
 function applyOverlaySize(): void {
   overwolf.games.getRunningGameInfo2((info: any) => {
     const gi = info && info.gameInfo;
     const sw = (gi && (gi.logicalWidth || gi.width)) || 1920;
     const sh = (gi && (gi.logicalHeight || gi.height)) || 1080;
+    const w = Math.round(sw * overlayWidthPct);
+    const h = Math.round(sh * overlayHeightPct);
+    const margin = 12;
+    const left = overlayCorner.indexOf('right') >= 0 ? Math.max(0, sw - w - margin) : margin;
+    const top = overlayCorner.indexOf('bottom') >= 0 ? Math.max(0, sh - h - margin) : margin;
     overwolf.windows.obtainDeclaredWindow('in_game', (res: any) => {
       if (!res || !res.success || !res.window) return;
-      overwolf.windows.changeSize({
-        window_id: res.window.id,
-        width: Math.round(sw * overlayWidthPct),
-        height: Math.round(sh * overlayHeightPct),
-      });
+      const id = res.window.id;
+      overwolf.windows.changeSize({ window_id: id, width: w, height: h });
+      overwolf.windows.changePosition(id, left, top, () => {});
     });
   });
 }
@@ -395,6 +420,17 @@ function handleInfoUpdate(payload: any): void {
   const scene = info.game_info && info.game_info.scene;
   if (gameMode || scene) updateTiming(gameMode, scene);
 
+  // Agente equipado (para el recordatorio de habilidades pre-ronda). Codename interno, ej "BountyHunter_PC_C".
+  if (info.me && info.me.agent) engine.setAgent(info.me.agent);
+  // Disponibilidad de habilidades por tecla: {"C":true,"Q":true,"E":true,"X":false}. Puede venir como
+  // objeto o como string JSON (GEP suele serializar los objetos anidados). El USO real se infiere de las
+  // transiciones true->false dentro del engine.
+  if (info.me && info.me.abilities != null) {
+    let ab: any = info.me.abilities;
+    if (typeof ab === 'string') { try { ab = JSON.parse(ab); } catch (_) { ab = null; } }
+    if (ab) engine.setAbilities(ab);
+  }
+
   const mi = info.match_info;
   if (mi) {
     for (const key of Object.keys(mi)) {
@@ -405,6 +441,8 @@ function handleInfoUpdate(payload: any): void {
         } catch (_) {}
       }
     }
+    // round_number: contador de ronda. Su CAMBIO dispara el recordatorio de habilidades (1 vez/ronda).
+    if (mi.round_number) engine.setRoundNumber(mi.round_number);
     // round_phase: shopping (compra) | combat (activo) | end / game_end (fin de ronda)
     if (mi.round_phase === 'end' || mi.round_phase === 'game_end') engine.setPhase('roundEnd');
     else if (mi.round_phase === 'shopping') engine.setPhase('buy');
@@ -421,6 +459,8 @@ function updateTiming(gameMode: string, scene: string): void {
   timing = newTiming;
   engine.setFeedbackTiming(timing);
   manageInstantTimer();
+  // cambió el contexto (Range<->partida): limpiamos la lista + contadores del overlay para arrancar de cero.
+  overwolf.windows.sendMessage('in_game', 'reset', {}, () => {});
   const msg = live ? 'Feedback en vivo' : 'Modo partida — feedback al final de ronda';
   overlayCal(msg, true);
   log('TIMING: ' + msg + (gameMode ? ' (mode ' + gameMode + ')' : '') + (scene ? ' (scene ' + scene + ')' : ''));
@@ -436,7 +476,7 @@ function handleGameEvents(payload: any): void {
   const events = (payload && payload.events) || [];
   for (const ev of events) {
     if (!ev || !ev.name) continue;
-    if (debugFlicks) log('GEP-EVENT ' + ev.name + (ev.data !== undefined ? ' = ' + safe(ev.data).slice(0, 100) : ''));
+    logDebug('GEP-EVENT ' + ev.name + (ev.data !== undefined ? ' = ' + safe(ev.data).slice(0, 100) : ''));
     if (ev.name === 'match_info' && ev.data) tryRoundReport(ev.data);
     if (ev.name === 'kill') { const cls = engine.pushKill(); log('KILL · contexto del tiro: ' + cls); }
     if (ev.name === 'headshot') engine.pushHeadshot();
@@ -505,7 +545,7 @@ function connectMouseStream(): void {
       const now = Date.now();
       if (now - lastMouseLog > 3000) {
         lastMouseLog = now;
-        log('CAPTURER: ' + mouseCount + ' eventos de mouse recibidos');
+        logDebug('CAPTURER: ' + mouseCount + ' eventos de mouse recibidos');
       }
     } catch (_) {}
   };
@@ -518,7 +558,7 @@ function connectMouseStream(): void {
 // ---------------------------------------------------------------------------
 function showFeedback(feedback: any): void {
   // overlay: solo el mensaje corto/accionable. log: el detalle con numeros.
-  overwolf.windows.sendMessage('in_game', 'feedback', { prio: feedback.prio, msg: feedback.msg }, () => {});
+  overwolf.windows.sendMessage('in_game', 'feedback', { prio: feedback.prio, msg: feedback.msg, key: feedback.key }, () => {});
   log('FEEDBACK: ' + (feedback.detail || feedback.msg));
 }
 
