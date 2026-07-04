@@ -14,9 +14,15 @@ node_modules/
 dist/
 build/
 
+# Salida de tests / demos compilados (tsc -> node) + cobertura
+.tmp-tests/
+.tmp/
+coverage/
+.nyc_output/
+
 # Nativo (.NET) — artefactos de compilación (se rebuildean con `dotnet publish`).
-# El single-file self-contained pesa ~147MB, no se versiona: se regenera desde
-# native/MouseCapturer.cs (ver CLAUDE.md).
+# El single-file self-contained (~11MB, Win32 crudo + trimmed) no se versiona: se regenera desde
+# native/MouseCapturer.cs (ver docs).
 native/obj/
 native/bin/
 native/publish/
@@ -24,6 +30,8 @@ native/publish/
 # Herramientas de Claude Code (no forman parte del proyecto)
 .claude/
 CLAUDE.md
+docs/
+AGENTS.md
 
 # Logs / varios
 *.log

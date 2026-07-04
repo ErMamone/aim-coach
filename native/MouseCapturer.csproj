@@ -1,18 +1,27 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- WinExe = sin ventana de consola. WinForms por el message loop / NativeWindow. -->
+    <!-- WinExe = subsistema GUI de Windows (sin ventana de consola). La ventana message-only + el message
+         loop se hacen en Win32 crudo (P/Invoke), ya NO con WinForms -> se publica sobre el runtime BASE. -->
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>MouseCapturer</AssemblyName>
+    <!-- Nombre del exe = nombre del proceso en el Task Manager. Prefijo AimCoach para que el usuario
+         lo identifique al buscarlo entre los procesos. -->
+    <AssemblyName>AimCoach-MouseCapturer</AssemblyName>
   </PropertyGroup>
 
-  <!-- Para un exe portable sin runtime instalado, publicar con:
-       dotnet publish -c Release -r win-x64 self-contained y PublishSingleFile en true.
-       (No se escriben los flags con doble guion aca: XML prohibe guion-guion dentro de un comentario.) -->
-
+  <!-- Publicacion FINA (self-contained ~12MB en vez de ~155): al no depender de WinForms/WPF publica sobre
+       Microsoft.NETCore.App (base), single-file comprimido, trimming (no hay reflection en este exe), e
+       InvariantGlobalization para no llevar ICU. Self-contained => NO requiere .NET instalado en la PC del usuario.
+       Build: dotnet publish -c Release -r win-x64 self-contained (ver package.json build:native). -->
+  <PropertyGroup>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
 
 </Project>

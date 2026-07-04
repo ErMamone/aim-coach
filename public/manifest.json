@@ -1,0 +1,89 @@
+{
+  "manifest_version": "1",
+  "type": "WebApp",
+  "permissions": ["Extensions", "Hotkeys", "GameInfo", "FileSystem"],
+  "meta": {
+    "name": "Aim Coach",
+    "version": "0.1.0",
+    "minimum-overwolf-version": "0.220.0.1",
+    "author": "Eros Mamone",
+    "icon": "assets/icon.png",
+    "icon_gray": "assets/icon_gray.png",
+    "launcher_icon": "assets/desktop_icon.ico",
+    "description": "Coach de aim para Valorant (telemetria de mouse + eventos GEP)"
+  },
+  "data": {
+    "game_targeting": {
+      "type": "dedicated",
+      "game_ids": [21640]
+    },
+    "start_window": "background",
+    "windows": {
+      "background": {
+        "file": "windows/background/page.html",
+        "is_background_page": true,
+        "open_dev_tools": true
+      },
+      "config": {
+        "file": "windows/config/page.html",
+        "desktop_only": true,
+        "resizable": true,
+        "transparent": false,
+        "show_in_taskbar": true,
+        "open_dev_tools": true,
+        "size": { "width": 860, "height": 640 },
+        "min_size": { "width": 600, "height": 420 }
+      },
+      "in_game": {
+        "file": "windows/in-game/page.html",
+        "in_game_only": true,
+        "transparent": true,
+        "clickthrough": true,
+        "topmost": true,
+        "size": { "width": 1100, "height": 760 },
+        "start_position": { "top": 30, "left": 30 }
+      }
+    },
+    "game_events": [21640],
+    "hotkeys": {
+      "aimcoach_toggle": {
+        "title": "Mostrar/ocultar overlay Aim Coach",
+        "action-type": "custom",
+        "default": "Ctrl+Shift+A"
+      },
+      "aimcoach_cal_360": {
+        "title": "Calibrar giro 360°",
+        "action-type": "custom",
+        "default": "Ctrl+Shift+G"
+      },
+      "aimcoach_cal_baseline": {
+        "title": "Calibrar baseline (sprays)",
+        "action-type": "custom",
+        "default": "Ctrl+Shift+B"
+      },
+      "aimcoach_config": {
+        "title": "Abrir configuración Aim Coach",
+        "action-type": "custom",
+        "default": "Ctrl+Shift+C"
+      }
+    },
+    "launch_events": [
+      {
+        "event": "GameLaunch",
+        "event_data": { "game_ids": [21640] },
+        "start_minimized": false
+      }
+    ],
+    "extra-objects": {
+      "process-manager-plugin": {
+        "file": "plugins/process_manager.dll",
+        "class": "com.overwolf.com.overwolf.procmgr.ProcessManager"
+      }
+    },
+    "developer": {
+      "enable_auto_refresh": true,
+      "reload_delay": 1000,
+      "filter": "*.*"
+    }
+  }
+}

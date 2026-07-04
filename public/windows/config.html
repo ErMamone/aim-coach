@@ -1,0 +1,282 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Aim Coach</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      /* paleta Valorant: navy + rojo de marca + off-white (identidad del juego) */
+      --bg: #0f1923;
+      --surface: #1b2733;
+      --surface-2: #23303d;
+      --border: #2e3d4c;
+      --border-strong: #3d4f60;
+      --text: #ece8e1;
+      --text-dim: #8b9ba8;
+      --text-mute: #63727e;
+      --accent: #ff4655;
+      --accent-soft: rgba(255, 70, 85, .15);
+      --teal: #2ed3b7;
+      --radius: 8px;
+      --radius-lg: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; height: 100vh; display: flex; flex-direction: column;
+      font-family: system-ui, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text);
+      font-size: 14px; line-height: 1.5;
+    }
+
+    .appbar { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 52px;
+      border-bottom: 1px solid var(--border); background: var(--surface); cursor: move; user-select: none; flex-shrink: 0; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+    .brand h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+    .appbar .hint { font-size: 12px; color: var(--text-mute); }
+    .appbar .spacer { margin-left: auto; }
+    kbd { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--text-dim); }
+    .langsw { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 20px; overflow: hidden; }
+    .langsw button { background: transparent; border: 0; color: var(--text-dim); font-size: 11px; font-weight: 700; padding: 5px 11px; cursor: pointer; }
+    .langsw button.on { background: var(--surface-2); color: var(--text); }
+    .winctrls { display: flex; gap: 2px; cursor: default; }
+    .winctrls button { background: transparent; color: var(--text-dim); border: 0; width: 30px; height: 28px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+    .winctrls button:hover { background: var(--surface-2); color: var(--text); }
+    .winctrls button.close:hover { background: var(--accent); color: #fff; }
+
+    .pill { display: inline-flex; align-items: center; gap: 7px; background: var(--surface-2); border: 1px solid var(--border-strong);
+      color: var(--text-dim); border-radius: 20px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .pill:hover { border-color: var(--teal); color: var(--text); }
+    .pill .led { width: 8px; height: 8px; border-radius: 50%; background: var(--text-mute); }
+    .pill.on { color: var(--text); border-color: var(--teal); }
+    .pill.on .led { background: var(--teal); box-shadow: 0 0 6px var(--teal); }
+
+    .content { flex: 1; overflow-y: auto; padding: clamp(12px, 2vw, 22px); min-height: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; align-items: start; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px 18px; }
+    .card-wide { grid-column: 1 / -1; }
+    .card-head { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+    /* recoil trainer: canvas (tu traza vs el patrón ideal) + leyenda */
+    .recoil-wrap { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+    #recoilCanvas { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+      width: 100%; max-width: 640px; height: auto; flex: 1 1 340px; }
+    .recoil-info { display: flex; flex-direction: column; gap: 10px; min-width: 150px; }
+    .recoil-score { font-size: 22px; font-weight: 600; color: var(--text); }
+    .recoil-score .weapon { font-size: 12px; color: var(--text-dim); text-transform: capitalize; }
+    .recoil-legend { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-dim); }
+    .recoil-legend span { display: inline-flex; align-items: center; gap: 7px; }
+    .recoil-legend .dot { width: 12px; height: 3px; border-radius: 2px; }
+    .recoil-legend .dot.teal { background: var(--teal); }
+    .recoil-legend .dot.red { background: var(--accent); }
+    .recoil-overlay-cfg { max-width: 340px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .card-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); margin: 0; font-weight: 600; }
+    .card-head .help { margin-left: auto; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-2);
+      border: 1px solid var(--border-strong); color: var(--text-dim); font-size: 12px; font-weight: 700; cursor: pointer; line-height: 1; }
+    .card-head .help:hover { border-color: var(--teal); color: var(--teal); }
+    .help-body { display: none; font-size: 12px; color: var(--text-dim); line-height: 1.6; background: var(--bg);
+      border: 1px solid var(--border); border-left: 2px solid var(--teal); border-radius: var(--radius); padding: 9px 11px; margin: 0 0 12px; }
+    .help-body.show { display: block; }
+
+    label { display: block; font-size: 12px; color: var(--text-dim); margin: 12px 0 5px; }
+    .field-row { display: flex; align-items: center; gap: 10px; }
+    input[type=number], input[type=text], select {
+      background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text);
+      border-radius: var(--radius); padding: 8px 10px; font-size: 13px; width: 130px; }
+    input[type=text], select { width: 100%; }
+    input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    input[type=range] { width: 100%; accent-color: var(--accent); vertical-align: middle; }
+    .slider-label { display: flex; justify-content: space-between; align-items: baseline; }
+    .slider-label .val { color: var(--text); font-weight: 600; font-size: 12px; background: var(--surface-2); border-radius: 20px; padding: 1px 9px; }
+
+    .readout { font-size: 12px; color: var(--text-mute); margin-top: 10px; line-height: 1.55; }
+    .readout b { color: var(--text); }
+    code { background: var(--surface-2); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+
+    button.btn { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
+      border-radius: var(--radius); padding: 8px 13px; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 12px; }
+    button.btn:hover:not(:disabled) { border-color: var(--teal); }
+    button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+    button.btn:disabled { opacity: .45; cursor: default; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .btn-row .btn { margin-top: 0; }
+
+    .status { font-size: 12px; margin-top: 10px; color: var(--text-dim); min-height: 16px; }
+    .status.ok { color: var(--teal); }
+    .status.err { color: var(--accent); }
+    .baseline { font-family: Consolas, monospace; font-size: 11px; color: var(--text-dim); background: var(--bg);
+      border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; white-space: pre-wrap; max-height: 160px; overflow-y: auto; }
+
+    .corner-picker { position: relative; width: 100%; max-width: 220px; aspect-ratio: 16/9; background: var(--bg);
+      border: 1px solid var(--border-strong); border-radius: var(--radius); }
+    .corner-dot { position: absolute; width: 18px; height: 18px; border-radius: 50%; padding: 0;
+      background: var(--surface-2); border: 2px solid var(--border-strong); cursor: pointer; }
+    .corner-dot:hover { border-color: var(--accent); }
+    .corner-dot.sel { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+    .corner-dot[data-corner="top-left"]     { top: 9px; left: 9px; }
+    .corner-dot[data-corner="top-right"]    { top: 9px; right: 9px; }
+    .corner-dot[data-corner="bottom-left"]  { bottom: 9px; left: 9px; }
+    .corner-dot[data-corner="bottom-right"] { bottom: 9px; right: 9px; }
+
+    #logDrawer { display: none; flex-direction: column; height: 240px; border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+    #logDrawer.show { display: flex; }
+    .log-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+    .log-bar h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); font-weight: 600; }
+    .log-bar .spacer { margin-left: auto; }
+    .log-bar button { background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border-strong); border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .log-bar button:hover { border-color: var(--teal); color: var(--text); }
+    #log { flex: 1; overflow-y: auto; padding: 10px 14px; margin: 0; font-family: Consolas, monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--text-dim); }
+    #log .line { padding: 1px 0; }
+    #log .line.err { color: var(--accent); }
+    #log .line.ok { color: var(--teal); }
+
+    .ad-card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+      padding: 18px 10px 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .ad-card.top { margin-bottom: 16px; }
+    .ad-card.bottom { margin-top: 16px; }
+    .ad-card .ad-tag { position: absolute; top: 6px; left: 12px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-mute); z-index: 1; }
+    /* el ad es 728x90 fijo; lo escalamos por JS (fitAds) para que entre en el ancho de su card.
+       .ad-msg queda de fondo (se ve si no hay anuncio); el ad de OwAd va en .ad-target por encima. */
+    .ad-slot { position: relative; flex: 0 0 auto; width: 728px; height: 90px; transform-origin: center center; }
+    .ad-slot .ad-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 0 20px; color: var(--text-mute); font-size: 12px; line-height: 1.5; }
+    .ad-slot .ad-target { position: absolute; inset: 0; }
+
+    .resize-grip { position: fixed; z-index: 9999; }
+    .resize-grip.r { top: 0; right: 0; width: 6px; height: 100%; cursor: ew-resize; }
+    .resize-grip.b { left: 0; bottom: 0; height: 6px; width: 100%; cursor: ns-resize; }
+    .resize-grip.br { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+  </style>
+</head>
+<body>
+  <div class="appbar" id="titlebar">
+    <div class="brand"><span class="dot"></span><h1>Aim Coach</h1></div>
+    <span class="hint">overlay <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></span>
+    <div class="spacer"></div>
+    <div class="langsw" id="langSwitch">
+      <button data-lang="es">ES</button>
+      <button data-lang="en">EN</button>
+    </div>
+    <button class="pill" id="debugToggle"><span class="led"></span><span data-i18n="debug">Modo Debugger</span></button>
+    <div class="winctrls">
+      <button id="winMin" title="Minimizar">—</button>
+      <button id="winClose" class="close" title="Cerrar">✕</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="ad-card top"><span class="ad-tag" data-i18n="ad.tag">Publicidad</span><div class="ad-slot"><span class="ad-msg" data-i18n="ad.msg">Estos ads ayudan a mantener la app. Considerá desbloquearlos.</span><div class="ad-target" id="ad-top"></div></div></div>
+    <div class="grid">
+      <div class="card card-wide">
+        <div class="card-head"><h2 data-i18n="recoil.title">Recoil Trainer</h2><button class="help">?</button></div>
+        <div class="help-body" data-i18n-html="recoil.help">Sprayeá sostenido en el Range: acá ves tu recorrido (rojo) vs el patrón ideal (verde). Donde se separan, ahí perdés el control.</div>
+        <div class="recoil-wrap">
+          <canvas id="recoilCanvas" width="640" height="220"></canvas>
+          <div class="recoil-info">
+            <div class="recoil-score" id="recoilScore" data-i18n="recoil.empty">Sprayeá sostenido en el Range para ver tu traza.</div>
+            <div class="recoil-legend">
+              <span><i class="dot teal"></i><span data-i18n="recoil.ideal">Ideal</span></span>
+              <span><i class="dot red"></i><span data-i18n="recoil.you">Vos</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="recoil-overlay-cfg">
+          <div class="slider-label"><label style="margin:0;" data-i18n="recoil.posx">Traza in-game · X</label><span class="val" id="recoilLeftVal">15%</span></div>
+          <input type="range" id="recoilLeft" min="0" max="90" step="1" value="15" />
+          <div class="slider-label"><label data-i18n="recoil.posy">Traza in-game · Y</label><span class="val" id="recoilTopVal">50%</span></div>
+          <input type="range" id="recoilTop" min="0" max="100" step="1" value="50" />
+          <div class="slider-label"><label data-i18n="recoil.size">Traza in-game · tamaño</label><span class="val" id="recoilScaleVal2">1.0×</span></div>
+          <input type="range" id="recoilScale" min="0.6" max="2" step="0.1" value="1" />
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="cal360.title">Calibración · giro 360</h2><button class="help">?</button></div>
+        <div class="help-body" data-i18n-html="cal360.help">Chequea que tu DPI/sens estén bien: girás UNA vuelta limpia en el juego y la app mide si coincide. Disparala con el botón o <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>.</div>
+        <button class="btn" id="cal360Start" data-i18n="cal360.btn">Calibrar 360 (in-game)</button>
+        <div class="status" id="cal360Status"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="calbase.title">Calibración · recoil por arma</h2><button class="help">?</button></div>
+        <div class="help-body" data-i18n-html="calbase.help">Cada arma sprayea distinto. Elegí el arma, entrá al Range con ESA arma y hacé 5 sprays sostenidos: la app aprende TU curva de recoil y la usa como referencia en el Recoil Trainer.</div>
+        <label data-i18n="calbase.weapon">Arma a calibrar</label>
+        <select id="calWeapon">
+          <option value="vandal">Vandal</option>
+          <option value="phantom">Phantom</option>
+          <option value="spectre">Spectre</option>
+          <option value="bulldog">Bulldog</option>
+          <option value="guardian">Guardian</option>
+          <option value="stinger">Stinger</option>
+          <option value="ares">Ares</option>
+          <option value="odin">Odin</option>
+        </select>
+        <div class="field-row" style="margin-top:12px;">
+          <button class="btn" style="margin-top:0;" id="calSprayStart" data-i18n="calbase.btn">Calibrar arma</button>
+          <span class="hint"><span data-i18n="or">o</span> <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></span>
+        </div>
+        <div class="status" id="calSprayStatus"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="sens.title">Sensibilidad</h2><button class="help">?</button></div>
+        <div class="help-body" data-i18n-html="sens.help">Poné el DPI de tu mouse y la sens de Valorant. Con eso convertimos tus movimientos a grados y podemos medir tu aim.</div>
+        <label data-i18n="sens.dpi">DPI del mouse</label>
+        <input type="number" id="dpi" min="100" step="50" value="800" />
+        <label data-i18n="sens.ingame">Sensibilidad in-game</label>
+        <input type="number" id="sens" min="0.05" step="0.01" value="0.4" />
+        <div class="readout" id="sensReadout"></div>
+        <button class="btn primary" id="saveSens" data-i18n="save">Guardar</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="ovpos.title">Overlay · posición</h2></div>
+        <label data-i18n="ovpos.corner">Esquina (clic en el punto)</label>
+        <div class="corner-picker" id="cornerPicker">
+          <button type="button" class="corner-dot" data-corner="top-left"></button>
+          <button type="button" class="corner-dot" data-corner="top-right"></button>
+          <button type="button" class="corner-dot" data-corner="bottom-left"></button>
+          <button type="button" class="corner-dot" data-corner="bottom-right"></button>
+        </div>
+        <div class="slider-label" style="margin-top:12px;"><label style="margin:0;" data-i18n="opacity">Opacidad</label><span class="val" id="opacityVal">100%</span></div>
+        <input type="range" id="overlayOpacity" min="30" max="100" step="5" value="100" />
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="ovsize.title">Overlay · tamaño</h2></div>
+        <div class="slider-label"><label style="margin:0;" data-i18n="width">Ancho</label><span class="val" id="owVal">30%</span></div>
+        <input type="range" id="overlayWidthPct" min="15" max="70" step="1" value="30" />
+        <div class="slider-label"><label data-i18n="height">Alto</label><span class="val" id="ohVal">45%</span></div>
+        <input type="range" id="overlayHeightPct" min="15" max="80" step="1" value="45" />
+        <div class="slider-label"><label data-i18n="text">Texto</label><span class="val" id="overlayScaleVal">1.0×</span></div>
+        <input type="range" id="overlayScale" min="0.7" max="3" step="0.1" value="1" />
+        <label data-i18n="maxmsg">Máx. de mensajes</label>
+        <input type="number" id="overlayMaxItems" min="1" max="20" step="1" value="6" />
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2 data-i18n="actions.title">Acciones</h2></div>
+        <div class="btn-row">
+          <button class="btn" id="toggleBtn" data-i18n="actions.toggle">Mostrar / ocultar overlay</button>
+          <button class="btn" id="clearOverlayBtn" data-i18n="actions.clearOverlay">Limpiar overlay</button>
+        </div>
+        <div class="readout" data-i18n-html="actions.readout">El <b>Modo Debugger</b> (arriba a la derecha) abre la consola de logs. Off por defecto.</div>
+      </div>
+    </div>
+    <div class="ad-card bottom"><span class="ad-tag" data-i18n="ad.tag">Publicidad</span><div class="ad-slot"><span class="ad-msg" data-i18n="ad.msg">Estos ads ayudan a mantener la app. Considerá desbloquearlos.</span><div class="ad-target" id="ad-bottom"></div></div></div>
+  </div>
+
+  <div id="logDrawer">
+    <div class="log-bar">
+      <h3 data-i18n="console">Consola</h3>
+      <div class="spacer"></div>
+      <button id="exportLogs" data-i18n="export">Exportar (40 min)</button>
+      <button id="clearBtn" data-i18n="clear">Limpiar</button>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <div class="resize-grip r" id="gripR"></div>
+  <div class="resize-grip b" id="gripB"></div>
+  <div class="resize-grip br" id="gripBR"></div>
+</body>
+</html>
