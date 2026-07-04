@@ -71,7 +71,7 @@ const I18N: { [key: string]: { es: string; en: string } } = {
   'actions.title': { es: 'Acciones', en: 'Actions' },
   'actions.toggle': { es: 'Mostrar / ocultar overlay', en: 'Show / hide overlay' },
   'actions.clearOverlay': { es: 'Limpiar overlay', en: 'Clear overlay' },
-  'actions.readout': { es: 'El <b>Modo Debugger</b> (arriba a la derecha) abre la consola de logs. Off por defecto.', en: '<b>Debug mode</b> (top-right) opens the log console. Off by default.' },
+  'actions.readout': { es: 'El <b>Modo Debugger</b> (arriba a la derecha) abre la consola de logs. Off por defecto. <b>Exportar logs</b> guarda un .txt en tu <b>Escritorio</b> (para soporte).', en: '<b>Debug mode</b> (top-right) opens the log console. Off by default. <b>Export logs</b> saves a .txt to your <b>Desktop</b> (for support).' },
   'recoil.title': { es: 'Recoil Trainer', en: 'Recoil Trainer' },
   'recoil.help': { es: 'Sprayeá sostenido en el Range: acá ves tu recorrido (rojo) vs el patrón ideal (verde). Donde se separan, ahí perdés el control.', en: 'Do a sustained spray in the Range: here you see your path (red) vs the ideal pattern (green). Where they split is where you lose control.' },
   'recoil.empty': { es: 'Sprayeá sostenido en el Range para ver tu traza.', en: 'Do a sustained spray in the Range to see your trace.' },
@@ -105,6 +105,9 @@ const I18N: { [key: string]: { es: string; en: string } } = {
   'status.ok360': { es: 'OK', en: 'OK' },
   'status.bad360': { es: 'revisá DPI/aceleración', en: 'check DPI/acceleration' },
   'log.ready': { es: 'Config lista. El overlay vive dentro del juego: abrí Valorant y se abre solo. Toggle: Ctrl+Shift+A.', en: 'Config ready. The overlay lives in-game: open Valorant and it opens on its own. Toggle: Ctrl+Shift+A.' },
+  'log.savedDesktop': { es: '✔ Log guardado en tu Escritorio: {path} — mandá ese archivo para soporte.', en: '✔ Log saved to your Desktop: {path} — send that file for support.' },
+  'log.savedFallback': { es: '✔ Log guardado en: {path} (no se encontró el Escritorio) — mandá ese archivo para soporte.', en: '✔ Log saved to: {path} (Desktop not found) — send that file for support.' },
+  'log.saveFailed': { es: '✖ No se pudo guardar el log ({error}). Revisá permisos o espacio en disco.', en: '✖ Could not save the log ({error}). Check permissions or disk space.' },
 };
 let lang: Lang = (config.lang === 'en' ? 'en' : 'es');
 function t(key: string, vars?: { [k: string]: string | number }): string {
@@ -230,18 +233,14 @@ debugToggleBtn?.addEventListener('click', () => {
   renderDebug(); saveConfig(config); applyToBackground();
 });
 
-// ---- Exportar logs: pide al background el buffer (últimos 40 min) y lo descarga como archivo ----
+// ---- Exportar logs: el background junta los últimos 40 min y GUARDA el archivo en el Escritorio (para
+// soporte: el usuario lo encuentra fácil y lo comparte). Acá solo mostramos la ruta donde quedó. ----
 $('exportLogs')?.addEventListener('click', () => {
   overwolf.windows.sendMessage('background', 'export-logs', {}, () => {});
 });
-function downloadLogs(text: string): void {
-  const blob = new Blob([text || '(sin logs)'], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'aimcoach-logs-' + new Date().toISOString().replace(/[:.]/g, '-') + '.txt';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+function reportLogsSaved(c: { ok: boolean; path?: string; onDesktop?: boolean; error?: string }): void {
+  if (c.ok && c.path) addLine(t(c.onDesktop ? 'log.savedDesktop' : 'log.savedFallback', { path: c.path }));
+  else addLine(t('log.saveFailed', { error: c.error || '?' }));
 }
 
 // ---- helpers UI ----
@@ -365,8 +364,8 @@ overwolf.windows.onMessageReceived.addListener((m: any) => {
     case 'recoil-trace':
       if (m.content) { lastRecoilTrace = m.content; updateRecoilStats(m.content); drawRecoilTrace(m.content); }
       break;
-    case 'logs-export':
-      if (m.content) downloadLogs(m.content.text);
+    case 'logs-saved':
+      if (m.content) reportLogsSaved(m.content);
       break;
     case 'cal-progress':
       if (m.content) setStatus('calSprayStatus', t('status.calProgress', { n: m.content.sprays }));

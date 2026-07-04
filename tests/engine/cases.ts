@@ -119,13 +119,6 @@ export const CASES: Case[] = [
     expect: ['placement'],
   },
 
-  // ---------------- habilidades (nudge post-ronda en partidas) ----------------
-  {
-    name: 'abilities: ronda peleada sin usar habilidades -> recordatorio',
-    events: [['timing', 'onDeath'], ['phase', 'active'], ['shots', 3], WARM, ['phase', 'roundEnd']],
-    expect: ['abilities'],
-  },
-
   // ---------------- recoil-score (warm-up gate; necesita sens + patrón del arma) ----------------
   {
     name: 'recoil-score: spray sostenido DURANTE warm-up -> no puntúa (gate)',
@@ -188,13 +181,6 @@ export const CASES: Case[] = [
     expect: ['flick-summary'],
   },
 
-  // ---------------- abilities con agente (nombra las habilidades) ----------------
-  {
-    name: 'abilities con agente: nombra C/Q/E del agente equipado',
-    events: [['timing', 'onDeath'], ['agent', 'bountyhunter'], ['phase', 'active'], ['shots', 3], WARM, ['phase', 'roundEnd']],
-    expect: ['abilities'],
-  },
-
   // ---------------- recoil-score real (después del warm-up, spray descontrolado) ----------------
   {
     name: 'recoil-score: spray descontrolado después del warm-up -> puntúa (bad)',
@@ -211,23 +197,10 @@ export const CASES: Case[] = [
     notExpect: ['kill-good', 'kill-static'],
   },
 
-  // ---------------- recordatorio de habilidades pre-ronda (al cambiar de ronda, en partida) ----------------
+  // ---------------- habilidades: NO se coachan (GEP no da el uso real) ----------------
   {
-    name: 'ability-pre: cambio de ronda con agente conocido -> recordatorio proactivo',
-    events: [['timing', 'onDeath'], ['agent', 'bountyhunter'], ['roundNumber', 1]],
-    expect: ['ability-pre'],
-  },
-  {
-    name: 'ability-pre gate: en práctica (Range) no molesta',
-    events: [['timing', 'instant'], ['agent', 'bountyhunter'], ['roundNumber', 1]],
-    notExpect: ['ability-pre'],
-  },
-  {
-    name: 'abilities usadas: si usaste una habilidad en combate, NO te la recuerda',
-    events: [['timing', 'onDeath'], ['phase', 'active'],
-      ['abilities', { C: true, Q: true, E: true, X: false }],
-      ['abilities', { C: false, Q: true, E: true, X: false }], // C: true->false = uso real
-      ['shots', 3], WARM, ['phase', 'roundEnd']],
-    notExpect: ['abilities'],
+    name: 'abilities: NUNCA se avisa de habilidades (ni en partida peleada) — feature removida',
+    events: [['timing', 'onDeath'], ['phase', 'active'], ['keyDown', 'e'], ['keyUp', 'e'], ['shots', 3], WARM, ['phase', 'roundEnd']],
+    notExpect: ['abilities', 'ability-pre'],
   },
 ];

@@ -6,7 +6,6 @@
 import { AimCoachEngine } from '../../src/engine/ruleEngine';
 import { sensMath, countsToCounterDegrees, verify360, sprayGestureQuality, BaselineCalibrator } from '../../src/engine/calibration';
 import { msPerBullet, approxPattern, curveFromHold, buildReference, scoreSpray, PATTERNS, DETERMINISTIC, DEFAULT_DETERMINISTIC } from '../../src/engine/recoil';
-import { agentName, abilityName } from '../../src/engine/agents';
 import { auditMessages } from '../../src/engine/messages';
 import { RecoilCurve } from '../../src/engine/types';
 
@@ -131,18 +130,6 @@ export const UNITS: Unit[] = [
       const bad = scoreSpray(flat, PATTERNS.vandal, { deterministic: 7 })!;
       assert(bad.score < 55, `descontrolado debería puntuar bajo, dio ${bad.score}`);
       assert(bad.phase === 'vertical', 'el eje del error debería ser vertical');
-    },
-  },
-
-  // ---------------- agents.ts ----------------
-  {
-    name: 'agents: nombre y habilidad por codename (case-insensitive); desconocido = null',
-    run: () => {
-      assert(agentName('bountyhunter') === 'Fade', 'bountyhunter = Fade');
-      assert(agentName('desconocido') === null, 'desconocido = null');
-      assert(abilityName('bountyhunter', 'C') === 'Prowler', 'C = Prowler');
-      assert(abilityName('bountyhunter', 'x') === 'Nightfall', 'x (minúscula) = Nightfall');
-      assert(abilityName('desconocido', 'C') === null, 'desconocido = null');
     },
   },
 

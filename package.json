@@ -10,7 +10,7 @@
   "scripts": {
     "build": "webpack",
     "watch": "webpack --watch",
-    "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/publish",
+    "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -o native/publish",
     "build:all": "yarn build:native && yarn build",
     "test": "tsc -p tests/tsconfig.json && node .tmp-tests/tests/engine/run.js",
     "test:coverage": "tsc -p tests/tsconfig.json && c8 node .tmp-tests/tests/engine/run.js",

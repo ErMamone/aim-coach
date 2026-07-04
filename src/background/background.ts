@@ -198,12 +198,57 @@ function onConfigMessage(m: any): void {
       startCalBaseline();
       break;
     case 'export-logs': {
-      // arma el texto de los últimos 40 min con timestamp y lo manda a la config para descargar.
+      // arma el texto de los últimos 40 min con timestamp y lo GUARDA en el Escritorio (fácil de encontrar
+      // y compartir para soporte). Reporta la ruta a la config para mostrarla al usuario.
       const text = logBuffer.map(e => '[' + new Date(e.t).toLocaleTimeString() + '] ' + e.line).join('\n');
-      sendToConfig('logs-export', { text });
+      saveLogsToDesktop(text || '(no logs)');
       break;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Export de logs al Escritorio (soporte). No se puede pedir el "Escritorio" a Overwolf directo; se deriva
+// el home del usuario desde getStoragePath(appData) (AppData NUNCA se redirige, siempre bajo el perfil) y
+// se prueban las carpetas Desktop / OneDrive\Desktop (OneDrive suele redirigir el Escritorio). Fallback:
+// la carpeta escribible de la app. Escribe con overwolf.io.writeFileContents (permiso FileSystem).
+// ---------------------------------------------------------------------------
+function saveLogsToDesktop(text: string): void {
+  const space = overwolf.extensions.io.enums.StorageSpace.appData;
+  overwolf.extensions.io.getStoragePath(space, (s: any) => {
+    const storage = (s && s.path) || '';
+    const home = deriveUserHome(storage);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const fname = 'AimCoach-log-' + ts + '.txt';
+    resolveDesktopDir(home, (dir) => {
+      const target = (dir || storage).replace(/\\+$/, '');
+      if (!target) { log('LOGS: no writable path'); sendToConfig('logs-saved', { ok: false }); return; }
+      const dst = target + '\\' + fname;
+      overwolf.io.writeFileContents(dst, text, overwolf.io.enums.eEncoding.UTF8, false, (res: any) => {
+        if (res && res.success) { log('LOGS: saved to ' + dst); sendToConfig('logs-saved', { ok: true, path: dst, onDesktop: !!dir }); }
+        else { log('LOGS: write failed (' + (res && res.error) + ')'); sendToConfig('logs-saved', { ok: false, path: dst, error: res && res.error }); }
+      });
+    });
+  });
+}
+
+// home del usuario a partir de un path bajo AppData (ej "C:\Users\me\AppData\Local\..." -> "C:\Users\me").
+function deriveUserHome(p: string): string {
+  const i = p.toLowerCase().indexOf('\\appdata\\');
+  return i > 0 ? p.slice(0, i) : '';
+}
+
+// Devuelve la primera carpeta de Escritorio que EXISTE (Desktop normal o redirigido a OneDrive), o null.
+function resolveDesktopDir(home: string, cb: (dir: string | null) => void): void {
+  if (!home) { cb(null); return; }
+  const candidates = [home + '\\Desktop', home + '\\OneDrive\\Desktop'];
+  let i = 0;
+  const next = () => {
+    if (i >= candidates.length) { cb(null); return; }
+    const c = candidates[i++];
+    overwolf.io.exist(c, (r: any) => (r && r.success && r.exist) ? cb(c) : next());
+  };
+  next();
 }
 
 // ---------------------------------------------------------------------------
@@ -460,20 +505,6 @@ function handleInfoUpdate(payload: any): void {
   const scene = info.game_info && info.game_info.scene;
   if (gameMode || scene) updateTiming(gameMode, scene);
 
-  // Agente equipado (para el recordatorio de habilidades pre-ronda). Codename interno, ej "BountyHunter_PC_C".
-  if (info.me && info.me.agent) engine.setAgent(info.me.agent);
-  // Disponibilidad de habilidades por tecla: {"C":true,"Q":true,"E":true,"X":false}. Puede venir como
-  // objeto o como string JSON (GEP suele serializar los objetos anidados). El USO real se infiere de las
-  // transiciones true->false dentro del engine.
-  if (info.me && info.me.abilities != null) {
-    let ab: any = info.me.abilities;
-    if (typeof ab === 'string') { try { ab = JSON.parse(ab); } catch (_) { ab = null; } }
-    if (ab) {
-      const s = JSON.stringify(ab);
-      if (s !== lastAbilities) { logDebug('ABILITIES ' + s); lastAbilities = s; } // debug: stream de disponibilidad
-      engine.setAbilities(ab);
-    }
-  }
 
   const mi = info.match_info;
   if (mi) {
@@ -481,26 +512,29 @@ function handleInfoUpdate(payload: any): void {
       if (key.indexOf('scoreboard_') === 0) {
         try {
           const row = JSON.parse(mi[key]);
-          if (row.is_local && row.weapon) {
-            const w = cleanWeapon(row.weapon);
-            if (w !== lastWeapon) { logDebug('WEAPON -> ' + w + ' (from "' + row.weapon + '")'); lastWeapon = w; }
-            engine.setWeapon(w);
+          if (row.is_local) {
+            if (row.weapon) {
+              const w = cleanWeapon(row.weapon);
+              if (w !== lastWeapon) { logDebug('WEAPON -> ' + w + ' (from "' + row.weapon + '")'); lastWeapon = w; }
+              engine.setWeapon(w);
+            }
           }
         } catch (_) {}
       }
     }
-    // round_number: contador de ronda. Su CAMBIO dispara el recordatorio de habilidades (1 vez/ronda).
-    if (mi.round_number) engine.setRoundNumber(mi.round_number);
     // round_phase: shopping (compra) | combat (activo) | end / game_end (fin de ronda).
     // OJO: 'active' SOLO en combat (antes lo seteaba round_number, que viene siempre -> contaba habilidades
     // en la compra). Ahora la fase de combate es limpia y el conteo de habilidades es correcto.
+    // DIAGNÓSTICO (Debugger): logueamos cada transición de fase para confirmar que 'combat' realmente llega
+    // (si no, _inCombat nunca se activa y las habilidades no se cuentan aunque `me.abilities` sí venga).
+    if (mi.round_phase != null && mi.round_phase !== lastPhase) { logDebug('PHASE ' + mi.round_phase); lastPhase = mi.round_phase; }
     if (mi.round_phase === 'end' || mi.round_phase === 'game_end') engine.setPhase('roundEnd');
     else if (mi.round_phase === 'shopping') engine.setPhase('buy');
     else if (mi.round_phase === 'combat') engine.setPhase('active');
   }
 }
-let lastAbilities = '';
 let lastWeapon = '';
+let lastPhase = '';    // diagnóstico (Debugger): última round_phase logueada (dedupe)
 
 // Práctica (Range) -> feedback instantáneo (timer). Resto -> feedback al morir.
 function updateTiming(gameMode: string, scene: string): void {

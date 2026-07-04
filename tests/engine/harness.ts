@@ -17,9 +17,6 @@ export type Ev =
   | ['weapon', string]
   | ['sens', number]                                    // countsPerDegree (habilita el scoring de recoil)
   | ['baseline', string, Partial<Baseline>]             // setea baseline calibrado del arma (merge sobre el DEFAULT)
-  | ['agent', string]
-  | ['abilities', { [k: string]: boolean }]
-  | ['roundNumber', number]
   | ['phase', string]                                   // active | buy | roundEnd | dead (roundEnd flushea en partidas)
   | ['report', any]                                     // round_report de GEP (placement)
   | ['wait', number]                                    // avanza el reloj N ms (sin evento)
@@ -98,9 +95,6 @@ class Driver {
       case 'weapon': e.setWeapon(ev[1]); break;
       case 'sens': e.setSens(ev[1]); break;
       case 'baseline': e.baselines[ev[1]] = { ...DEFAULT_BASELINE, ...ev[2] }; break;
-      case 'agent': e.setAgent(ev[1]); break;
-      case 'abilities': e.setAbilities(ev[1]); break;
-      case 'roundNumber': e.setRoundNumber(ev[1]); break;
       case 'phase': e.setPhase(ev[1]); break;
       case 'report': e.pushRoundReport(ev[1]); break;
       case 'wait': this.clock += ev[1]; break;

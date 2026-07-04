@@ -17,51 +17,86 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 internal static class Program
 {
-    [STAThread]
+    private static RawInputWindow? _window; // referencia estatica: mantiene viva la ventana + su WndProc (no GC)
+
     private static void Main()
     {
         var server = new WsServer("http://127.0.0.1:9595/");
         server.Start();
 
-        var window = new RawInputWindow(server);
-
-        Application.Run(); // ventana + message loop (necesario para WM_INPUT)
+        _window = new RawInputWindow(server); // registra la ventana message-only + raw input
+        RawInputWindow.RunMessageLoop();      // bombea WM_INPUT hasta WM_QUIT
+        GC.KeepAlive(_window);
     }
 }
 
-internal sealed class RawInputWindow : NativeWindow
+// Ventana message-only en Win32 CRUDO (sin WinForms/WPF): recibe WM_INPUT y sirve la telemetria.
+// Se sacaron NativeWindow/Application.Run para publicar sobre el runtime BASE (self-contained ~12MB en
+// vez de ~155MB, que arrastraba WinForms+WPF entero por 2 llamadas). El P/Invoke ya se usaba para raw input.
+internal sealed class RawInputWindow
 {
     private const int WM_INPUT = 0x00FF;
+    private const int WM_DESTROY = 0x0002;
     private const int RID_INPUT = 0x10000003;
     private const int RIM_TYPEMOUSE = 0;
     private const int RIM_TYPEKEYBOARD = 1;
     private const uint RIDEV_INPUTSINK = 0x00000100;
+    private const string ClassName = "AimCoachRawInputWindow";
+    private static readonly IntPtr HWND_MESSAGE = new(-3);
 
     private static readonly Stopwatch Clock = Stopwatch.StartNew();
     private readonly WsServer _server;
     private readonly System.Collections.Generic.HashSet<ushort> _pressed = new(); // teclas ya presionadas (ignora auto-repeat)
+    private readonly WndProcDelegate _wndProc;   // campo: el delegate NO se puede GC-ear mientras Win32 lo referencia
+    private readonly IntPtr _hwnd;
 
     public RawInputWindow(WsServer server)
     {
         _server = server;
-        CreateHandle(new CreateParams { Parent = new IntPtr(-3) }); // HWND_MESSAGE
+        _wndProc = WndProc;
+        IntPtr hInstance = GetModuleHandleW(null);
+
+        var wc = new WNDCLASSEX
+        {
+            cbSize = (uint)Marshal.SizeOf<WNDCLASSEX>(),
+            lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
+            hInstance = hInstance,
+            lpszClassName = ClassName,
+        };
+        if (RegisterClassExW(ref wc) == 0)
+            throw new InvalidOperationException("RegisterClassEx: " + Marshal.GetLastWin32Error());
+
+        _hwnd = CreateWindowExW(0, ClassName, "AimCoachRawInput", 0, 0, 0, 0, 0, HWND_MESSAGE, IntPtr.Zero, hInstance, IntPtr.Zero);
+        if (_hwnd == IntPtr.Zero)
+            throw new InvalidOperationException("CreateWindowEx: " + Marshal.GetLastWin32Error());
+
         var rid = new[]
         {
-            new RAWINPUTDEVICE { usUsagePage = 0x01, usUsage = 0x02, dwFlags = RIDEV_INPUTSINK, hwndTarget = Handle }, // mouse
-            new RAWINPUTDEVICE { usUsagePage = 0x01, usUsage = 0x06, dwFlags = RIDEV_INPUTSINK, hwndTarget = Handle }, // teclado
+            new RAWINPUTDEVICE { usUsagePage = 0x01, usUsage = 0x02, dwFlags = RIDEV_INPUTSINK, hwndTarget = _hwnd }, // mouse
+            new RAWINPUTDEVICE { usUsagePage = 0x01, usUsage = 0x06, dwFlags = RIDEV_INPUTSINK, hwndTarget = _hwnd }, // teclado
         };
         if (!RegisterRawInputDevices(rid, (uint)rid.Length, (uint)Marshal.SizeOf<RAWINPUTDEVICE>()))
             throw new InvalidOperationException("RegisterRawInputDevices: " + Marshal.GetLastWin32Error());
     }
 
-    protected override void WndProc(ref Message m)
+    // Message loop clasico Win32: reemplaza a Application.Run(). Corre en el hilo principal (WM_INPUT llega acá).
+    public static void RunMessageLoop()
     {
-        if (m.Msg == WM_INPUT) Handle_(m.LParam);
-        base.WndProc(ref m);
+        while (GetMessageW(out MSG msg, IntPtr.Zero, 0, 0) > 0)
+        {
+            TranslateMessage(ref msg);
+            DispatchMessageW(ref msg);
+        }
+    }
+
+    private IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        if (msg == WM_INPUT) Handle_(lParam);
+        if (msg == WM_DESTROY) { PostQuitMessage(0); return IntPtr.Zero; }
+        return DefWindowProcW(hWnd, msg, wParam, lParam); // WM_INPUT tambien cae acá para el cleanup del SO
     }
 
     private void Handle_(IntPtr h)
@@ -103,7 +138,7 @@ internal sealed class RawInputWindow : NativeWindow
     }
 
     // Solo las teclas que nos importan: movimiento (WASD) + habilidades (Q E C X F) + shift/ctrl/space.
-    private static string MapKey(ushort vk) => vk switch
+    private static string? MapKey(ushort vk) => vk switch
     {
         0x57 => "w", 0x41 => "a", 0x53 => "s", 0x44 => "d",
         0x51 => "q", 0x45 => "e", 0x43 => "c", 0x58 => "x", 0x46 => "f",
@@ -115,7 +150,7 @@ internal sealed class RawInputWindow : NativeWindow
 
     private void HandleKey(RAWKEYBOARD k, long t)
     {
-        string key = MapKey(k.VKey);
+        string? key = MapKey(k.VKey);
         if (key == null) return;
         bool up = (k.Flags & 0x01) != 0; // RI_KEY_BREAK
         if (up) { if (!_pressed.Remove(k.VKey)) return; }
@@ -124,10 +159,36 @@ internal sealed class RawInputWindow : NativeWindow
             "{\"t\":" + t + ",\"type\":\"key\",\"a\":\"" + (up ? "up" : "down") + "\",\"k\":\"" + key + "\"}");
     }
 
+    // ---- P/Invoke: raw input ----
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterRawInputDevices(RAWINPUTDEVICE[] d, uint n, uint cb);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint GetRawInputData(IntPtr h, uint cmd, IntPtr data, ref uint sz, uint cbHeader);
+
+    // ---- P/Invoke: ventana message-only + message loop (reemplazo de WinForms) ----
+    private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandleW(string? name);
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern ushort RegisterClassExW(ref WNDCLASSEX c);
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern IntPtr CreateWindowExW(uint exStyle, string className, string windowName, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr hInstance, IntPtr param);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr DefWindowProcW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetMessageW(out MSG msg, IntPtr hWnd, uint min, uint max);
+    [DllImport("user32.dll")] private static extern bool TranslateMessage(ref MSG msg);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr DispatchMessageW(ref MSG msg);
+    [DllImport("user32.dll")] private static extern void PostQuitMessage(int exitCode);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WNDCLASSEX
+    {
+        public uint cbSize, style;
+        public IntPtr lpfnWndProc;
+        public int cbClsExtra, cbWndExtra;
+        public IntPtr hInstance, hIcon, hCursor, hbrBackground;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpszMenuName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string lpszClassName;
+        public IntPtr hIconSm;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int x, y; }
+    [StructLayout(LayoutKind.Sequential)] private struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public POINT pt; }
 
     [StructLayout(LayoutKind.Sequential)] private struct RAWINPUTDEVICE { public ushort usUsagePage, usUsage; public uint dwFlags; public IntPtr hwndTarget; }
     [StructLayout(LayoutKind.Sequential)] private struct RAWINPUTHEADER { public int dwType, dwSize; public IntPtr hDevice, wParam; }

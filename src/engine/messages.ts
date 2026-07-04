@@ -8,10 +8,6 @@
 export type Lang = 'es' | 'en';
 
 const M: { [key: string]: { es: string; en: string } } = {
-  // habilidades pre-ronda (short = detail)
-  'abilityPre.short': { es: '{agent}: preparate — {names}', en: '{agent}: get ready — {names}' },
-  'abilityPre.skipped': { es: '{agent}: la ronda pasada no usaste ninguna — usá {names}', en: "{agent}: you used none last round — use {names}" },
-
   // hs-rate
   'hsRate.bad.short': { es: 'Pocos headshots — subí la mira', en: 'Few headshots — raise your aim' },
   'hsRate.bad.detail': { es: '{pct}% de tus kills a la cabeza ({hs}/{kills}). Pre-aimeá a altura de cabeza.', en: '{pct}% of your kills to the head ({hs}/{kills}). Pre-aim at head height.' },
@@ -85,11 +81,6 @@ const M: { [key: string]: { es: string; en: string } } = {
   'strafeStatic.detail': { es: '{static}/{shots} tiros parado. Sos predecible: movete entre disparos y counter-strafeá.', en: '{static}/{shots} shots standing. Predictable: move between shots and counter-strafe.' },
   'strafeKill.short': { es: 'Buenos kills en movimiento ({n})', en: 'Good kills on the move ({n})' },
   'strafeKill.detail': { es: 'Mataste counter-strafeando {n} veces. Eso es lo ideal: móvil y preciso.', en: 'You killed counter-strafing {n} times. That’s ideal: mobile and precise.' },
-
-  // habilidades no usadas
-  'abilities.short': { es: 'No usaste habilidades', en: 'You used no abilities' },
-  'abilities.named': { es: 'No usaste ninguna habilidad esta ronda. Tenías: {names} — inflan tu impacto.', en: 'You used no abilities this round. You had: {names} — they boost your impact.' },
-  'abilities.generic': { es: 'Recordá usar tus habilidades (C/Q/E) — inflan tu impacto en la ronda.', en: 'Remember to use your abilities (C/Q/E) — they boost your round impact.' },
 
   // placement (R6)
   'placement.low.short': { es: 'Subí la mira — apuntás muy bajo', en: 'Raise your aim — too low' },

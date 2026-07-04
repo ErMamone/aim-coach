@@ -11,7 +11,6 @@
 
 import { sprayGestureQuality, BaselineCalibrator } from './calibration';
 import * as recoil from './recoil';
-import * as agents from './agents';
 import { T } from './messages';
 import {
   Feedback, CalProgress, FlickInfo, StrafeInfo, Baseline, RecoilCurve, RecoilTrace, EngineOptions,
@@ -74,7 +73,6 @@ interface Round {
   shotsStatic: number;
   kills: number;
   killsGood: number;
-  abilityUses: { [key: string]: number };
   report: any;
 }
 
@@ -136,10 +134,6 @@ class AimCoachEngine {
   private _practiceWeapon: string | null; // fallback de arma cuando GEP no la da (Range)
   private _timing: 'instant' | 'onDeath'; // 'instant' (práctica/range) | 'onDeath' (partidas)
   private _lang: 'es' | 'en' = 'es';       // idioma de los mensajes del overlay
-  private _agent: string | null;          // codename del agente (GEP me.agent)
-  private _abilities: { [key: string]: boolean } | null; // disponibilidad previa (GEP me.abilities)
-  private _roundNumber: number | null;    // ronda actual (GEP round_number)
-  private _lastRoundAbilities: number | null; // habilidades distintas usadas la ronda pasada (null = aún no jugaste)
 
   private _calibrating: boolean;
   private _calibrator: BaselineCalibrator | null;
@@ -195,10 +189,6 @@ class AimCoachEngine {
     this._practiceWeapon = null;
     this.deadTime = false;
     this._timing = 'onDeath';
-    this._agent = null;
-    this._abilities = null;
-    this._roundNumber = null;
-    this._lastRoundAbilities = null;
 
     this._calibrating = false;
     this._calibrator = null;
@@ -282,7 +272,7 @@ class AimCoachEngine {
   private _emptyRound(): Round {
     return {
       sprays: [], flicks: [], taps: 0, shortICIs: 0, overshoots: [], flickClasses: [],
-      shots: 0, shotsMoving: 0, shotsCounter: 0, shotsStatic: 0, kills: 0, killsGood: 0, abilityUses: {}, report: null,
+      shots: 0, shotsMoving: 0, shotsCounter: 0, shotsStatic: 0, kills: 0, killsGood: 0, report: null,
     };
   }
 
@@ -321,68 +311,12 @@ class AimCoachEngine {
   /* _t — texto de mensaje en el idioma actual (ver messages.ts). */
   private _t(key: string, params?: { [k: string]: string | number }): string { return T(key, this._lang, params); }
 
-  /* setAgent — agente equipado (GEP me.agent, codename interno). Para el recordatorio de habilidades. */
-  setAgent(agent: string | null): void {
-    const code = String(agent || '').replace(/_PC_C$/i, '').replace(/_/g, '').toLowerCase();
-    this._agent = code || null;
-  }
-  private _agentName(): string | null { return agents.agentName(this._agent); }
-
-  /* setAbilities — disponibilidad de habilidades (GEP me.abilities = {C,Q,E,X} booleanos). La transición
-   * disponible->no-disponible (true->false) = la habilidad se USÓ DE VERDAD (no una tecla apretada en
-   * cooldown, que no hace nada). Contamos esos usos por ronda. Reemplaza el conteo por teclado.
-   */
-  setAbilities(map: { [key: string]: boolean }): void {
-    if (!map || typeof map !== 'object') return;
-    const prev = this._abilities;
-    // SOLO contamos en combate: en la compra los cambios de disponibilidad son por COMPRAR, no por usar
-    // (ese era el bug: se contaba cualquier cosa). Muerto tampoco (GEP tira todo a false al morir).
-    if (prev && this._inCombat) {
-      for (const k of ['C', 'Q', 'E', 'X']) {
-        if (prev[k] === true && map[k] === false) {
-          const lk = k.toLowerCase();
-          this._round.abilityUses[lk] = (this._round.abilityUses[lk] || 0) + 1;
-        }
-      }
-    }
-    this._abilities = { C: !!map.C, Q: !!map.Q, E: !!map.E, X: !!map.X };
-  }
-
   setPhase(phase: string): void {
     this.deadTime = phase === 'buy' || phase === 'dead' || phase === 'roundEnd';
-    // combate = ventana donde contamos usos de habilidad (fuera de acá, los cambios son compra/respawn).
     if (phase === 'active') this._inCombat = true;
     else if (phase === 'buy' || phase === 'roundEnd' || phase === 'dead') this._inCombat = false;
     // En partidas el feedback se muestra al TERMINAR la ronda (se ve completo en la fase de compra).
     if (this._timing === 'onDeath' && phase === 'roundEnd') this._flush();
-  }
-
-  /* setRoundNumber — número de ronda (GEP round_number). El CAMBIO de ronda es la señal robusta de
-   * "arrancó una ronda nueva": pasa una sola vez por ronda (a diferencia de las fases combat/dead, que se
-   * repiten y re-disparaban el recordatorio tras cada muerte). Anclado acá firea en la compra, antes de entrar.
-   */
-  setRoundNumber(n: number | string): void {
-    const num = Number(n);
-    if (!Number.isFinite(num) || num === this._roundNumber) return;
-    this._roundNumber = num;
-    this._remindAbilitiesPreRound();
-  }
-
-  /* _remindAbilitiesPreRound — recordatorio proactivo de habilidades al inicio de la ronda (solo partidas).
-   * Se superficie AL INSTANTE (no espera al fin de ronda) porque el valor es que llegue ANTES de entrar.
-   */
-  private _remindAbilitiesPreRound(): void {
-    if (this._timing === 'instant') return;      // en Range/DM no aplica
-    const agent = this._agentName();
-    if (!agent) return;                          // agente desconocido -> no molestamos
-    // nombra las 3 habilidades no-ulti (C/Q/E), ej "Prowler (C) · Seize (Q) · Haunt (E)"
-    const names = ['C', 'Q', 'E']
-      .map(k => { const n = agents.abilityName(this._agent, k); return n ? `${n} (${k})` : k; })
-      .join(' · ');
-    const skippedLast = this._lastRoundAbilities === 0; // la ronda pasada no usaste ninguna
-    const msg = this._t(skippedLast ? 'abilityPre.skipped' : 'abilityPre.short', { agent, names });
-    this._queue(skippedLast ? 60 : 42, msg, msg, 'ability-pre');
-    this._surface();
   }
 
   /* flushInstant — lo llama el background por timer en modo práctica para feedback en vivo. */
@@ -394,8 +328,6 @@ class AimCoachEngine {
   private _flush(): void {
     this._evaluateRoundRules();
     this._surface();
-    // recordamos cuántas habilidades DISTINTAS usaste esta ronda (uso real de GEP) para el nudge siguiente.
-    if (this._timing === 'onDeath') this._lastRoundAbilities = Object.keys(this._round.abilityUses).length;
     this._round = this._emptyRound();
   }
 
@@ -405,8 +337,8 @@ class AimCoachEngine {
     else if (ev.a === 'move') this._onMove(ev);
   }
 
-  /* pushKey — teclado (WASD movimiento; las teclas de habilidad ya NO se cuentan acá — el USO real viene
-   * de GEP me.abilities via setAbilities, porque apretar la tecla en cooldown no hace nada).
+  /* pushKey — teclado: solo WASD para movimiento/strafe. (El uso de habilidades NO se coacha: GEP no da el
+   * cast real — me.abilities nunca se popula — y el keypress no distingue un cast de una tecla en cooldown.)
    */
   pushKey(ev: any): void {
     if (ev.a === 'down') {
@@ -750,15 +682,8 @@ class AimCoachEngine {
       this._queue(30, this._t('strafeKill.short', { n: r.killsGood }), this._t('strafeKill.detail', { n: r.killsGood }), 'strafe-kill');
     }
 
-    // Habilidades: nudge SOLO en partidas (en práctica molestaría). Uso REAL de GEP (no teclado).
-    // Si no usaste ninguna en toda la ronda (y peleaste), lo marcamos nombrando las del agente.
-    if (this._timing !== 'instant' && Object.keys(r.abilityUses).length === 0 && r.shots >= 3) {
-      const names = ['C', 'Q', 'E']
-        .map(k => { const n = agents.abilityName(this._agent, k); return n ? `${n} (${k})` : null; })
-        .filter(Boolean).join(' · ');
-      const detail = names ? this._t('abilities.named', { names }) : this._t('abilities.generic');
-      this._queue(40, this._t('abilities.short'), detail, 'abilities');
-    }
+    // (Habilidades: NO se coacha. GEP no da el uso real de habilidades — me.abilities nunca se popula — y
+    //  el keypress no distingue un cast de una tecla en cooldown; no inventamos un dato que no tenemos.)
 
     // R6: round_report de Overwolf -> crosshair placement (ancla de resultado, grueso)
     if (r.report) {
