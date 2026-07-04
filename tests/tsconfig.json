@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2017",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "strict": false,
+    "noEmitOnError": true,
+    "sourceMap": true,
+    "outDir": "../.tmp-tests",
+    "rootDir": "..",
+    "types": ["@overwolf/types"],
+    "lib": ["es2017", "dom"]
+  },
+  "include": ["**/*.ts", "../src/engine/**/*.ts"]
+}

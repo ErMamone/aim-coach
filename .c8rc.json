@@ -1,0 +1,12 @@
+{
+  "//": "Cobertura SOLO de los módulos puros y testeables del motor. Se excluye a propósito: la capa de plataforma (background/overlay/config, que necesita Overwolf/DOM), los DTOs (types.ts, sin runtime) y los harness de demo (calibrate_demo/simulate).",
+  "include": ["**/src/engine/**"],
+  "exclude": ["**/src/engine/types.ts", "**/src/engine/calibrate_demo.ts", "**/src/engine/simulate.ts", "**/*.map"],
+  "//thresholds": "Alto pero con ~2-3 pts de margen sobre el actual (99/99/90/83) para no romper por refactors chicos, pero sí atrapar código nuevo sin tests.",
+  "reporter": ["text"],
+  "check-coverage": true,
+  "lines": 97,
+  "statements": 97,
+  "functions": 90,
+  "branches": 80
+}

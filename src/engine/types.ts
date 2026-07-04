@@ -134,4 +134,5 @@ export interface EngineOptions {
   onRecoilScored?: (t: RecoilTrace) => void;
   baselines?: { [weapon: string]: Baseline };
   recoilRefs?: { [weapon: string]: RecoilCurve };
+  now?: () => number; // reloj inyectable (default Date.now). Los tests lo controlan para evaluar warm-up/dedup deterministamente.
 }

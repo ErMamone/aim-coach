@@ -108,7 +108,7 @@ class AimCoachEngine {
   weapon: string | null;         // arma equipada según GEP (solo llega en partidas)
   deadTime: boolean;
   private _inCombat = false;     // fase de combate: SOLO acá contamos usos de habilidad (no en la compra)
-  private _ctxWarmUntil = 0;     // fin del warm-up del contexto (Date.now()+WARMUP_MS, seteado en el primer tiro; 0 = sin tirar aún)
+  private _ctxWarmUntil = 0;     // fin del warm-up del contexto (this._now()+WARMUP_MS, seteado en el primer tiro; 0 = sin tirar aún)
 
   private _calWeapon: string | null;
   private _countsPerDegree: number;   // conversión counts<->grados (de la sens del usuario)
@@ -159,8 +159,10 @@ class AimCoachEngine {
 
   private _round: Round;
   private _pending: QueuedFeedback[];
+  private _now: () => number; // reloj (default Date.now; inyectable para tests deterministas de warm-up/dedup)
 
   constructor(opts: EngineOptions = {}) {
+    this._now = opts.now || Date.now;
     this.onFeedback = opts.onFeedback || (() => {});
     this.onCalProgress = opts.onCalProgress || (() => {});
     this.onFlick = opts.onFlick || (() => {});
@@ -419,7 +421,7 @@ class AimCoachEngine {
 
   /* pushHeadshot — headshot de GEP (llega justo después del kill si fue a la cabeza). */
   pushHeadshot(): void {
-    if (Date.now() - this._lastKillT < 800) this._hsKillCount++;
+    if (this._now() - this._lastKillT < 800) this._hsKillCount++;
   }
 
   /* _evalHsRate — cada N kills, evalúa el % a la cabeza (placement REAL por kill). */
@@ -441,10 +443,10 @@ class AimCoachEngine {
   pushKill(): string {
     this._round.kills++;
     this._killCount++;
-    this._lastKillT = Date.now();
+    this._lastKillT = this._now();
     if (this._killCount % 5 === 0) this._evalHsRate();
     const ls = this._lastStrafe;
-    const recent = ls && (Date.now() - ls.wall) < KILL_AFTER_SHOT_MS;
+    const recent = ls && (this._now() - ls.wall) < KILL_AFTER_SHOT_MS;
     const cls = recent ? ls!.class : 'sin-tiro-reciente';
     if (recent && (ls!.class === 'counter' || ls!.class === 'moviendo')) {
       this._round.killsGood++;
@@ -501,7 +503,7 @@ class AimCoachEngine {
 
     // strafe: clasificar el CONTEXTO de movimiento del tiro
     this._round.shots++;
-    if (!this._ctxWarmUntil) this._ctxWarmUntil = Date.now() + WARMUP_MS; // arranca el warm-up en tu primer tiro del contexto
+    if (!this._ctxWarmUntil) this._ctxWarmUntil = this._now() + WARMUP_MS; // arranca el warm-up en tu primer tiro del contexto
     const moving = this._anyMoveHeld();
     const sinceStop = this._moveStopT ? (ev.t - this._moveStopT) : 999999;
     let sclass: StrafeInfo['class'];
@@ -509,7 +511,7 @@ class AimCoachEngine {
     else if (this._moveStopT && sinceStop < COUNTER_STRAFE_MS) { sclass = 'counter'; this._round.shotsCounter++; } // frenaste justo antes (ideal)
     else if (sinceStop > STATIC_MS) { sclass = 'quieto'; this._round.shotsStatic++; }   // parado hace rato (predecible)
     else sclass = 'ok';                                                                 // parado hace poco, normal
-    this._lastStrafe = { class: sclass, wall: Date.now() };
+    this._lastStrafe = { class: sclass, wall: this._now() };
     // Solo emitimos info de strafe cuando hubo MOVIMIENTO reciente (moviéndote o frenaste hace poco).
     // Tiros totalmente parados/de espera no generan evento de strafe (era ruido).
     if (moving || sinceStop < STATIC_MS) {
@@ -650,7 +652,7 @@ class AimCoachEngine {
    * (primeras N balas, no-RNG); después el spread es aleatorio y no se juzga como control.
    */
   private _scoreRecoil(): void {
-    if (this._ctxWarmUntil && Date.now() < this._ctxWarmUntil) return; // warm-up: no puntuar los primeros sprays de prueba
+    if (this._ctxWarmUntil && this._now() < this._ctxWarmUntil) return; // warm-up: no puntuar los primeros sprays de prueba
     const w = this._activeWeapon();
     const r = this._recoilRef(w);
     if (!r) return;
@@ -678,7 +680,7 @@ class AimCoachEngine {
   private _evaluateRoundRules(): void {
     // Warm-up: en los primeros WARMUP_MS desde tu primer tiro no opinamos (evita "cosas raras" al arrancar).
     // Macro (riesgo de ban) NO pasa por acá: siempre se avisa.
-    if (this._ctxWarmUntil && Date.now() < this._ctxWarmUntil) return;
+    if (this._ctxWarmUntil && this._now() < this._ctxWarmUntil) return;
 
     const r = this._round, b = this._activeBaseline();
     const hasBaseline = this._hasBaseline(); // R2/R3/R4 comparan contra TU baseline: sin calibrar no significan nada
@@ -803,7 +805,7 @@ class AimCoachEngine {
   private _surface(): void {
     if (!this._pending.length) return;
     this._pending.sort((a, b) => b.prio - a.prio);
-    const now = Date.now();
+    const now = this._now();
     const out: QueuedFeedback[] = [];
     for (const f of this._pending) {
       if (now - (this._recentMsgs[f.key] || 0) < DEDUP_MS) continue; // ya lo dijimos hace poco

@@ -1,0 +1,2 @@
+# Chequeos rápidos en cada commit: lint + typecheck (estáticos, sin correr el build/juego).
+yarn lint && yarn typecheck

@@ -212,7 +212,6 @@ function onConfigMessage(m: any): void {
 // ---------------------------------------------------------------------------
 const COUNTDOWN_SECS = 5;     // tiempo para alt-tab al juego antes de empezar
 const REC_360_SECS = 6;       // ventana para hacer UNA vuelta limpia
-const REC_SPRAY_SECS = 30;    // ventana para sprayear
 
 let calBusy = false;
 let calInterval: any = null;

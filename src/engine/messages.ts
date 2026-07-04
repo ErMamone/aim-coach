@@ -144,3 +144,18 @@ export function T(key: string, lang: Lang, params?: { [k: string]: string | numb
   if (params) for (const k in params) s = s.split('{' + k + '}').join(String(params[k]));
   return s;
 }
+
+/* auditMessages — chequeo de integridad del diccionario (para tests): devuelve la lista de problemas.
+ * Verifica que cada key tenga ES y EN no vacíos y que los {params} coincidan entre ambos idiomas
+ * (una traducción a la que le falta un {param} rompería la interpolación sin que nadie se entere). */
+export function auditMessages(): string[] {
+  const issues: string[] = [];
+  const params = (s: string) => (s.match(/\{(\w+)\}/g) || []).slice().sort().join(',');
+  for (const key in M) {
+    const e = M[key];
+    if (!e.es) issues.push(`${key}: falta ES`);
+    if (!e.en) issues.push(`${key}: falta EN`);
+    if (e.es && e.en && params(e.es) !== params(e.en)) issues.push(`${key}: params ES/EN no coinciden (${params(e.es)} vs ${params(e.en)})`);
+  }
+  return issues;
+}

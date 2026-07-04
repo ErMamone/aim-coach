@@ -1,0 +1,2 @@
+# Antes de subir cualquier cosa: verify completo = lint + typecheck + test (motor) + build (webpack).
+yarn verify

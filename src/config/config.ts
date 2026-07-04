@@ -35,7 +35,7 @@ function saveConfig(c: AppConfig): void {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(c));
 }
 
-let config = loadConfig();
+const config = loadConfig();
 
 // ---- i18n (ES/EN): diccionario + t() con interpolación {var}; el HTML estático usa data-i18n ----
 type Lang = 'es' | 'en';
@@ -250,10 +250,6 @@ function setStatus(id: string, text: string, cls = ''): void {
   if (!el) return;
   el.textContent = text;
   el.className = 'status' + (cls ? ' ' + cls : '');
-}
-function setDisabled(id: string, disabled: boolean): void {
-  const el = $(id) as HTMLButtonElement;
-  if (el) el.disabled = disabled;
 }
 
 // ---- calibracion (disparo unico; el flujo es por tiempo, dirigido en el overlay) ----
