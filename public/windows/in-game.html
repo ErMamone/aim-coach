@@ -7,7 +7,7 @@
     html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
       font-family: system-ui, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; }
     /* el tamaño de la VENTANA lo define el background (% de pantalla); el texto escala por font-size */
-    #wrap { box-sizing: border-box; height: 100vh; padding: 10px; display: flex; flex-direction: column;
+    #wrap { position: relative; box-sizing: border-box; height: 100vh; padding: 10px; display: flex; flex-direction: column;
       gap: 7px; font-size: calc(13.5px * var(--scale, 1)); }
 
     #badge { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;
@@ -50,6 +50,15 @@
     /* flash breve cuando una fila del mismo tipo se actualiza */
     .fb.flash { animation: fbflash .5s ease-out; }
     @keyframes fbflash { 0% { background: rgba(91, 140, 255, .42); } 100% { background: rgba(18, 20, 27, .90); } }
+
+    /* mini-traza de recoil: absoluta (medio-izq por defecto), ajustable desde la config; no interfiere
+       con la lista de feedback. Posición/tamaño via CSS vars que setea el overlay (overlay-cfg). */
+    #recoil { display: none; position: absolute; left: var(--recoil-left, 15%); top: var(--recoil-top, 50%);
+      transform: translateY(-50%) scale(var(--recoil-scale, 1)); transform-origin: left center;
+      background: rgba(18, 20, 27, .90); border: 1px solid rgba(255, 255, 255, .07); border-radius: 9px; padding: 6px 8px; }
+    #recoil.show { display: block; }
+    #recoil canvas { display: block; }
+    #recoil .rlabel { font-size: 0.72em; color: #c8ccd8; font-weight: 600; margin-bottom: 3px; }
   </style>
 </head>
 <body>
@@ -57,6 +66,7 @@
     <div id="badge">Aim Coach</div>
     <div id="cal"></div>
     <div id="flick"></div>
+    <div id="recoil"><div class="rlabel"></div><canvas width="120" height="90"></canvas></div>
     <div id="items"></div>
   </div>
 </body>

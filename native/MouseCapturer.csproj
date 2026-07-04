@@ -7,7 +7,9 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>MouseCapturer</AssemblyName>
+    <!-- Nombre del exe = nombre del proceso en el Task Manager. Prefijo AimCoach para que el usuario
+         lo identifique al buscarlo entre los procesos. -->
+    <AssemblyName>AimCoach-MouseCapturer</AssemblyName>
   </PropertyGroup>
 
   <!-- Para un exe portable sin runtime instalado, publicar con:

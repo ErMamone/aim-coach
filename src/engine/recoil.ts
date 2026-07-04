@@ -4,7 +4,7 @@
  * pared) o del MODELO PARAMETRICO de PATTERNS (aproximado, ver abajo).
  */
 
-import { RecoilPoint, RecoilCurve, RecoilScore } from './types';
+import { RecoilPoint, RecoilCurve, RecoilScore, ScoreOptions } from './types';
 
 /* FIRE_RATE — cadencia por arma (balas/seg); se usa para segmentar el hold en balas. */
 const FIRE_RATE: { [weapon: string]: number } = {
@@ -54,13 +54,38 @@ export function approxPattern(params: ApproxPatternParams): RecoilCurve {
   return pat;
 }
 
-/* PATTERNS — patrones aproximados por arma (fallback cuando el usuario no auto-capturó su referencia). */
+/* PATTERNS — referencia de recoil por arma (capturada de gameplay con tools/annotate_recoil.py).
+ * OJO (patch 11.08): solo las PRIMERAS balas son deterministas/controlables (fase vertical, h≈0). Después
+ * el patrón entra en zona RNG: mantiene un vaivén izq-der-izq pero con SPREAD aleatorio grande → esos valores
+ * NO son un patrón fijo (por eso divergen). Ver DETERMINISTIC: cuántas balas se pueden controlar de verdad;
+ * el scoring solo puntúa esa fase, el resto es "ráfaga/spread" y no se juzga como control.
+ */
 export const PATTERNS: { [weapon: string]: RecoilCurve } = {
-  // Vandal: 25 balas, ~6 protegidas del yaw, T bien vertical y spread mayor que Phantom.
-  vandal: approxPattern({ bullets: 25, vTotal: 13, vSteep: 5, protectedH: 6, hAmp: 3.5, hDir: 1 }),
-  // Phantom: 30 balas, ~8 protegidas, un pelo menos vertical y menos spread; arranca leve derecha.
-  phantom: approxPattern({ bullets: 30, vTotal: 12, vSteep: 5.5, protectedH: 8, hAmp: 3.0, hDir: 1 }),
+  vandal: [
+    { v: 0.0, h: 0.0 }, { v: 0.51, h: -0.02 }, { v: 0.81, h: 0.06 }, { v: 2.31, h: 0.08 },
+    { v: 3.64, h: 0.0 }, { v: 5.09, h: -0.11 }, { v: 6.44, h: 0.23 }, { v: 6.81, h: 0.46 },
+    { v: 7.39, h: 0.04 }, { v: 7.65, h: -0.67 }, { v: 7.63, h: -1.71 }, { v: 7.82, h: -0.51 },
+    { v: 7.82, h: -0.18 }, { v: 7.96, h: 0.68 }, { v: 8.07, h: 1.17 }, { v: 8.08, h: 1.49 },
+    { v: 8.37, h: 1.96 }, { v: 8.4, h: 0.96 }, { v: 8.62, h: -0.02 }, { v: 8.25, h: -1.53 },
+    { v: 8.3, h: -1.75 }, { v: 8.19, h: -1.88 }, { v: 8.22, h: -2.03 }, { v: 8.2, h: -2.41 },
+  ],
+  phantom: [
+    { v: 0.0, h: 0.0 }, { v: 0.39, h: -0.07 }, { v: 0.8, h: -0.05 }, { v: 1.83, h: -0.18 },
+    { v: 2.81, h: 0.2 }, { v: 3.99, h: -0.01 }, { v: 5.09, h: 0.11 }, { v: 5.97, h: 0.62 },
+    { v: 6.2, h: 1.51 }, { v: 6.46, h: 1.85 }, { v: 6.71, h: 1.92 }, { v: 6.54, h: 1.26 },
+    { v: 6.66, h: 0.59 }, { v: 6.83, h: 0.49 }, { v: 6.64, h: -0.15 }, { v: 6.71, h: -0.62 },
+    { v: 6.78, h: 0.02 }, { v: 6.7, h: 0.01 }, { v: 6.73, h: 0.27 }, { v: 6.86, h: 0.14 },
+    { v: 7.1, h: -0.2 }, { v: 7.04, h: 0.11 }, { v: 7.17, h: 0.12 }, { v: 7.35, h: 0.46 },
+    { v: 7.19, h: 0.4 }, { v: 7.43, h: -0.14 }, { v: 7.09, h: -1.03 }, { v: 7.38, h: -1.72 },
+  ],
 };
+
+/* DETERMINISTIC — cuántas balas iniciales son CONTROLABLES (fase vertical, no-RNG) por arma. Después de
+ * esto el spread es aleatorio (ráfaga) y no se puntúa como control. Basado en el patch 11.08 (Vandal 1-6/7
+ * no-RNG) y en la observación de los datos (h≈0 hasta ~bala 8). Es más realista dominar 7 que fingir 24.
+ */
+export const DETERMINISTIC: { [weapon: string]: number } = { vandal: 7, phantom: 7 };
+export const DEFAULT_DETERMINISTIC = 7;
 
 /* HoldMove — un movimiento de mouse durante el hold del disparo (subconjunto de MouseSample). */
 interface HoldMove {
@@ -108,25 +133,57 @@ export function buildReference(curves: RecoilCurve[]): RecoilCurve | null {
   return ref;
 }
 
-/* scoreSpray — puntúa el spray del usuario contra la referencia. Devuelve score 0–100 + fase, o null. */
-export function scoreSpray(curve: RecoilCurve | null, ref: RecoilCurve | null): RecoilScore | null {
-  const n = Math.min((curve || []).length, (ref || []).length);
+// Peso por bala: las primeras deciden los duelos, así que pesan más (decae exponencial).
+function bulletWeight(i: number): number { return Math.pow(0.94, i); }
+// Cuánto pesa cada eje en el score: en la fase controlable el VERTICAL (el climb) es lo principal.
+const V_WEIGHT = 0.75, H_WEIGHT = 0.25;
+const H_TOLERANCE = 0.5; // en la fase controlable el h esperado es ~0; toleramos ~0.5° de deriva
+
+/* scoreSpray — puntúa el CONTROL de recoil del usuario: SOLO la fase determinista (primeras N balas,
+ * opts.deterministic), porque después el spread es RNG y no se puede controlar. Vertical y horizontal
+ * se calcan contra la referencia (ambos son deterministas en esta fase); las balas tempranas pesan más.
+ * Devuelve score 0–100 + eje (vertical/horizontal) + tramo (early/mid/late) del peor error.
+ */
+export function scoreSpray(
+  curve: RecoilCurve | null,
+  ref: RecoilCurve | null,
+  opts: ScoreOptions = {},
+): RecoilScore | null {
+  const det = opts.deterministic || DEFAULT_DETERMINISTIC;
+  const n = Math.min((curve || []).length, (ref || []).length, det);
   if (n < 3 || !curve || !ref) return null;
-  let errV = 0, errH = 0, magV = 0, magH = 0;
+
+  let wErrV = 0, wMagV = 0;                 // vertical (el climb controlable)
+  let wErrH = 0, wRefH = 0;                 // horizontal (≈0 en esta fase)
+  const segErr = [0, 0, 0], segMag = [0, 0, 0]; // error vertical por tramo (early/mid/late)
+
   for (let i = 0; i < n; i++) {
-    errV += Math.abs(curve[i].v - ref[i].v);
-    errH += Math.abs(curve[i].h - ref[i].h);
-    magV += Math.abs(ref[i].v);
-    magH += Math.abs(ref[i].h);
+    const w = bulletWeight(i);
+    const ev = Math.abs(curve[i].v - ref[i].v);
+    wErrV += w * ev; wMagV += w * Math.abs(ref[i].v);
+    // horizontal: calce vs la ref con un piso de tolerancia (el h esperado es chico en la fase controlable)
+    wErrH += w * Math.abs(curve[i].h - ref[i].h); wRefH += w * Math.max(Math.abs(ref[i].h), H_TOLERANCE);
+
+    const seg = i < n / 3 ? 0 : i < (2 * n) / 3 ? 1 : 2;
+    segErr[seg] += w * ev; segMag[seg] += w * (Math.abs(ref[i].v) + 0.5);
   }
-  const totErr = errV + errH;
-  const totMag = (magV + magH) || 1;
-  const score = Math.max(0, Math.min(100, Math.round(100 * (1 - totErr / totMag))));
-  const rV = errV / (magV || 1), rH = errH / (magH || 1);
+
+  const rV = wErrV / (wMagV || 1);
+  const rH = wErrH / (wRefH || 1);
+  const err = Math.min(1, V_WEIGHT * rV + H_WEIGHT * rH);
+  const score = Math.max(0, Math.min(100, Math.round(100 * (1 - err))));
+
+  // eje dominante del error
   let phase: RecoilScore['phase'] = null;
-  if (rV > 0.25 && rV >= rH) phase = 'vertical';
-  else if (rH > 0.25) phase = 'horizontal';
-  return { score, phase };
+  if (rV > 0.2 && rV >= rH) phase = 'vertical';
+  else if (rH > 0.2) phase = 'horizontal';
+
+  // tramo con más error vertical relativo (early/mid/late), si es notable
+  const ratios = segErr.map((e, s) => e / (segMag[s] || 1));
+  const worst = ratios.indexOf(Math.max(...ratios));
+  const segment: RecoilScore['segment'] = ratios[worst] > 0.3 ? (['early', 'mid', 'late'] as const)[worst] : null;
+
+  return { score, phase, segment };
 }
 
 export type { RecoilPoint };

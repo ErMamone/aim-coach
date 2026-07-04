@@ -67,7 +67,7 @@ process-manager + auto-launch da el efecto "una sola cosa activa todo":
    Ponelo en `overlay/plugins/process_manager.dll`. **Desbloqueá el DLL**: click derecho ->
    Propiedades -> tildar "Desbloquear". Si no, Overwolf no lo carga y la app crashea.
    Verificá el nombre de clase exacto del plugin contra el sample manifest del repo.
-3. **Compilá el capturador** y metelo en el OPK: `overlay/MouseCapturer.exe`.
+3. **Compilá el capturador** y metelo en el OPK: `overlay/AimCoach-MouseCapturer.exe`.
    - Liviano (depende del runtime .NET 8 en la maquina): `dotnet publish -c Release`.
    - Sin dependencias (OPK pesado, ~60MB+): publish self-contained single-file.
 4. **Armá el OPK**: ZIP de todo el contenido de `overlay/` (manifest en la raiz), compresion Normal
@@ -89,7 +89,7 @@ de india, lo mas rapido es "Load unpacked extension" en cada maquina.
 
 ### Alternativa mas simple (fase testers)
 
-Si el whitelisting te traba, saltá el process-manager plugin: poné `MouseCapturer.exe` en el
+Si el whitelisting te traba, saltá el process-manager plugin: poné `AimCoach-MouseCapturer.exe` en el
 Startup de Windows (corre siempre, en bandeja) y cargá la app Overwolf unpacked. Menos elegante,
 pero evita el plugin, el desbloqueo de DLL y la resolucion de rutas.
 

@@ -4,11 +4,16 @@
 
 import { AimCoachEngine } from '../engine/ruleEngine';
 import { verify360, sensMath } from '../engine/calibration';
+import { T, Lang } from '../engine/messages';
 
 const VALORANT_ID = 21640;
 const GEP_FEATURES = ['game_info', 'me', 'match_info', 'kill', 'death', 'gep_internal'];
 const CAPTURER_WS = 'ws://127.0.0.1:9595/';
 const CONFIG_KEY = 'aimcoach_config';
+const CAPTURER_EXE = 'AimCoach-MouseCapturer.exe'; // nombre del exe extraído (= nombre del proceso, identificable)
+const CAPTURER_SRC = 'native/' + CAPTURER_EXE;     // ruta relativa a la raíz del paquete (lo bundlea webpack)
+const CAPTURER_HEALTH_MS = 60000;                // cada cuánto el supervisor chequea el stream de mouse (1 min)
+const CAPTURER_MAX_STRIKES = 3;                  // intentos fallidos seguidos antes de reportar el error
 
 let engine: any = null;
 let valorantRunning = false;
@@ -17,7 +22,7 @@ let overlayVisible = false;
 // sensibilidad del usuario (para verify360); el engine usa el baseline.
 let dpi = 800;
 let sens = 0.4;
-let capturerPath = '';        // ruta absoluta al MouseCapturer.exe (se setea en config)
+let capturerPath = '';        // ruta absoluta al AimCoach-MouseCapturer.exe (se setea en config)
 let capturerLaunched = false;
 let overlayScale = 1;         // escala del TEXTO del overlay (ajustable desde config)
 let overlayMaxItems = 3;      // cantidad de últimos errores a mostrar (ajustable desde config)
@@ -25,8 +30,15 @@ let overlayWidthPct = 0.30;   // ancho del overlay como % de la pantalla del jue
 let overlayHeightPct = 0.45;  // alto del overlay como % de la pantalla del juego
 let overlayCorner = 'top-left'; // esquina donde se ancla el overlay
 let overlayOpacity = 1;       // opacidad del overlay (0.3–1)
+let recoilLeft = 15;          // posición X de la mini-traza de recoil (% de la ventana)
+let recoilTop = 50;           // posición Y de la mini-traza de recoil (% de la ventana)
+let recoilScale = 1;          // tamaño de la mini-traza de recoil
 let debug = false;            // Modo Debugger: emite logs verbosos (mouse/GEP/strafe/flicks) y muestra el panel
 let calWeapon = 'vandal';     // arma seleccionada para calibrar (en el Range no se autodetecta)
+let lang: Lang = 'es';        // idioma del overlay (config.lang); se propaga al overlay via overlay-cfg
+
+// Atajo para traducir el texto de UI del overlay que produce el background (dict en messages.ts).
+function t(key: string, params?: { [k: string]: string | number }): string { return T(key, lang, params); }
 
 // estado del stream de mouse y de la calibracion del giro 360
 let mouseConnected = false;
@@ -43,6 +55,12 @@ let mouseCount = 0;
 let lastMouseLog = 0;
 let gepCount = 0;
 let lastGepLog = 0;
+
+// Supervisor del capturer: vigila el stream de mouse y reporta si se cae (ej. borraron el exe).
+let capturerHealthTimer: any = null;
+let capturerStrikes = 0;        // health-checks fallidos seguidos (sin stream de mouse)
+let capturerReported = false;   // ya reportamos esta caída (evita spamear el mismo error)
+let lastCapturerDst = '';       // ruta del exe extraído (para el diagnóstico del reporte)
 
 function safe(a: any): string {
   try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (_) { return String(a); }
@@ -75,10 +93,14 @@ function start(): void {
       logDebug(`STRAFE ${info.class}${info.keys ? '(' + info.keys + ')' : ''} · sinceStop ${info.sinceStop == null ? '—' : info.sinceStop + 'ms'}`);
     },
     onCalProgress: (p: any) => onCalSprayProgress(p),
+    onRecoilScored: (tr: any) => { // traza para el Recoil Trainer (config) + mini-traza en el overlay
+      sendToConfig('recoil-trace', tr);
+      overwolf.windows.sendMessage('in_game', 'recoil-trace', tr, () => {});
+    },
   });
   loadSavedConfig();
   applySens();
-  log('background iniciado');
+  log('background started');
   // Overlay-first: la config solo se abre sola si falta setup (ruta del capturer).
   // En uso normal todo va por el overlay + hotkeys. Abrila cuando quieras con Ctrl+Shift+C.
   if (!capturerPath) openWindow('config');
@@ -88,6 +110,7 @@ function start(): void {
   initGameDetection();
   initGep();
   connectMouseStream();
+  startCapturerSupervisor(); // vigila el stream de mouse y reporta si se cae (self-heal + log-trace)
 }
 
 function sendToConfig(id: string, content: any): void {
@@ -112,12 +135,16 @@ function loadSavedConfig(): void {
     if (typeof saved.overlayHeightPct === 'number') overlayHeightPct = saved.overlayHeightPct;
     if (typeof saved.overlayCorner === 'string') overlayCorner = saved.overlayCorner;
     if (typeof saved.overlayOpacity === 'number') overlayOpacity = saved.overlayOpacity;
+    if (typeof saved.recoilLeft === 'number') recoilLeft = saved.recoilLeft;
+    if (typeof saved.recoilTop === 'number') recoilTop = saved.recoilTop;
+    if (typeof saved.recoilScale === 'number') recoilScale = saved.recoilScale;
     if (typeof saved.debug === 'boolean') debug = saved.debug;
+    if (typeof saved.lang === 'string') { lang = saved.lang === 'en' ? 'en' : 'es'; engine.setLang(lang); } // idioma del overlay
     if (typeof saved.calWeapon === 'string') calWeapon = saved.calWeapon;
     engine.setPracticeWeapon(calWeapon); // fallback de arma para el Range (GEP no la da)
     if (saved.baselines) {
       engine.setBaselines(saved.baselines);
-      log('baselines por arma cargados: ' + Object.keys(saved.baselines).join(', '));
+      log('per-weapon baselines loaded: ' + Object.keys(saved.baselines).join(', '));
     }
   } catch (_) {}
 }
@@ -138,7 +165,17 @@ function onConfigMessage(m: any): void {
         if (typeof m.content.overlayScale === 'number') overlayScale = m.content.overlayScale;
         if (typeof m.content.overlayMaxItems === 'number') overlayMaxItems = m.content.overlayMaxItems;
         if (typeof m.content.overlayOpacity === 'number') overlayOpacity = m.content.overlayOpacity;
-        if (typeof m.content.overlayScale === 'number' || typeof m.content.overlayMaxItems === 'number' || typeof m.content.overlayOpacity === 'number') sendOverlayConfig();
+        if (typeof m.content.recoilLeft === 'number') recoilLeft = m.content.recoilLeft;
+        if (typeof m.content.recoilTop === 'number') recoilTop = m.content.recoilTop;
+        if (typeof m.content.recoilScale === 'number') recoilScale = m.content.recoilScale;
+        if (typeof m.content.lang === 'string') {
+          lang = m.content.lang === 'en' ? 'en' : 'es';
+          engine.setLang(lang);
+          // Los mensajes ya visibles quedaron en el idioma viejo: limpiamos el overlay para que las próximas
+          // notificaciones se vean en el idioma nuevo (el texto ya renderizado no se re-traduce solo).
+          overwolf.windows.sendMessage('in_game', 'reset', {}, () => {});
+        }
+        if (['overlayScale', 'overlayMaxItems', 'overlayOpacity', 'recoilLeft', 'recoilTop', 'recoilScale'].some(k => typeof m.content[k] === 'number') || typeof m.content.lang === 'string') sendOverlayConfig();
         if (typeof m.content.overlayWidthPct === 'number') overlayWidthPct = m.content.overlayWidthPct;
         if (typeof m.content.overlayHeightPct === 'number') overlayHeightPct = m.content.overlayHeightPct;
         if (typeof m.content.overlayCorner === 'string') overlayCorner = m.content.overlayCorner;
@@ -146,9 +183,13 @@ function onConfigMessage(m: any): void {
         if (typeof m.content.debug === 'boolean') debug = m.content.debug;
         if (typeof m.content.calWeapon === 'string') { calWeapon = m.content.calWeapon; engine.setPracticeWeapon(calWeapon); }
         if (m.content.baselines) engine.setBaselines(m.content.baselines);
-        log('config aplicada (dpi ' + dpi + ', sens ' + sens + ', arma ' + calWeapon + ')');
+        log('config applied (dpi ' + dpi + ', sens ' + sens + ', weapon ' + calWeapon + ')');
         launchCapturer(); // por si recien configuraron la ruta
       }
+      break;
+    case 'clear-overlay':
+      // Limpieza manual desde la config: vacía la lista + contadores del overlay (arranca de cero).
+      overwolf.windows.sendMessage('in_game', 'reset', {}, () => {});
       break;
     case 'cal-360-start':
       startCal360();
@@ -189,10 +230,10 @@ function overlayCal(text: string, done = false): void {
 function countdown(label: string, then: () => void): void {
   stopCalInterval();
   let n = COUNTDOWN_SECS;
-  overlayCal(`${label} — empezá en ${n}…`);
+  overlayCal(t('cal.countdown', { label, n }));
   calInterval = setInterval(() => {
     n--;
-    if (n > 0) overlayCal(`${label} — empezá en ${n}…`);
+    if (n > 0) overlayCal(t('cal.countdown', { label, n }));
     else { stopCalInterval(); then(); }
   }, 1000);
 }
@@ -200,7 +241,7 @@ function countdown(label: string, then: () => void): void {
 function timedRecord(prompt: string, secs: number, onTick: () => string, done: () => void): void {
   stopCalInterval();
   let n = secs;
-  const render = () => overlayCal(`${prompt} — ${n}s${onTick()}`);
+  const render = () => overlayCal(t('cal.recording', { prompt, n, tick: onTick() }));
   render();
   calInterval = setInterval(() => {
     n--;
@@ -211,17 +252,17 @@ function timedRecord(prompt: string, secs: number, onTick: () => string, done: (
 
 function startCal360(): void {
   if (calBusy) return;
-  if (!valorantRunning) { log('CAL: abrí Valorant primero'); sendToConfig('cal-msg', { text: 'Abrí Valorant primero.' }); return; }
-  if (!mouseConnected) { log('CAL: capturer no conectado — corré MouseCapturer.exe'); sendToConfig('cal-msg', { text: 'Capturer no conectado: corré MouseCapturer.exe' }); return; }
+  if (!valorantRunning) { log('CAL: open Valorant first'); sendToConfig('cal-msg', { text: t('cal.needValorant') }); return; }
+  if (!mouseConnected) { log('CAL: capturer not connected — run AimCoach-MouseCapturer.exe'); sendToConfig('cal-msg', { text: t('cal.needCapturer') }); return; }
   calBusy = true;
   openOverlay();
-  log('CAL 360: empezando…');
-  countdown('Calibración 360', () => {
+  log('CAL 360: starting…');
+  countdown(t('cal.title360'), () => {
     cal360Active = true; cal360Sum = 0;
-    timedRecord('Girá UNA vuelta 360° limpia', REC_360_SECS, () => '', () => {
+    timedRecord(t('cal.turn360'), REC_360_SECS, () => '', () => {
       cal360Active = false;
       const res = verify360(cal360Sum, dpi, sens);
-      overlayCal(`360 ${res.ok ? 'OK' : 'revisar DPI'} · drift ${res.driftPct}%`, true);
+      overlayCal(t('cal.result360', { status: t(res.ok ? 'cal.ok360' : 'cal.checkDpi'), drift: res.driftPct }), true);
       sendToConfig('cal-360-result', res);
       log('CAL 360: ' + cal360Sum + ' counts -> sens ' + res.measuredSens + ' (drift ' + res.driftPct + '%)');
       calBusy = false;
@@ -232,15 +273,15 @@ function startCal360(): void {
 // Baseline simple: hacé TARGET_SPRAYS sprays (cualquier ráfaga), termina solo al llegar.
 function startCalBaseline(): void {
   if (calBusy) return;
-  if (!valorantRunning) { log('CAL: abrí Valorant primero'); sendToConfig('cal-msg', { text: 'Abrí Valorant primero.' }); return; }
-  if (!mouseConnected) { log('CAL: capturer no conectado — corré MouseCapturer.exe'); sendToConfig('cal-msg', { text: 'Capturer no conectado: corré MouseCapturer.exe' }); return; }
+  if (!valorantRunning) { log('CAL: open Valorant first'); sendToConfig('cal-msg', { text: t('cal.needValorant') }); return; }
+  if (!mouseConnected) { log('CAL: capturer not connected — run AimCoach-MouseCapturer.exe'); sendToConfig('cal-msg', { text: t('cal.needCapturer') }); return; }
   calBusy = true;
   openOverlay();
-  log('CAL baseline: empezando…');
-  countdown(`Calibración ${calWeapon}`, () => {
+  log('CAL baseline: starting…');
+  countdown(t('cal.titleWeapon', { weapon: calWeapon }), () => {
     engine.startCalibration(calWeapon);
     calBaselineActive = true;
-    overlayCal(`${calWeapon}: hacé ${TARGET_SPRAYS} sprays — 0/${TARGET_SPRAYS}`);
+    overlayCal(t('cal.doSprays', { weapon: calWeapon, n: TARGET_SPRAYS }));
     stopCalInterval();
     calInterval = setTimeout(() => { if (calBaselineActive) finishBaseline(); }, 60000); // safety
   });
@@ -250,8 +291,8 @@ function onCalSprayProgress(p: any): void {
   sendToConfig('cal-progress', p);
   if (!calBaselineActive) return;
   // accepted === false -> el spray no pasó el gate de calidad (flojo/reposición): no cuenta.
-  if (p.accepted === false) { overlayCal(`Spray flojo, no cuenta — ${p.sprays}/${TARGET_SPRAYS}`); return; }
-  overlayCal(`Sprays — ${p.sprays}/${TARGET_SPRAYS}`);
+  if (p.accepted === false) { overlayCal(t('cal.weakSpray', { done: p.sprays, n: TARGET_SPRAYS })); return; }
+  overlayCal(t('cal.sprays', { done: p.sprays, n: TARGET_SPRAYS }));
   if (p.sprays >= TARGET_SPRAYS) finishBaseline();
 }
 
@@ -261,11 +302,11 @@ function finishBaseline(): void {
   stopCalInterval();
   try {
     const result = engine.finishCalibration(); // { weapon, baseline }
-    overlayCal(`Baseline ${result.weapon} ✓`, true);
+    overlayCal(t('cal.baselineDone', { weapon: result.weapon }), true);
     sendToConfig('cal-spray-result', result);
     log('CAL baseline ' + result.weapon + ': ' + JSON.stringify(result.baseline));
   } catch (err: any) {
-    overlayCal('Pocos sprays, repetí', true);
+    overlayCal(t('cal.fewSprays'), true);
     sendToConfig('cal-spray-result', { error: (err && err.message) || 'error' });
     log('CAL baseline error: ' + (err && err.message));
   }
@@ -274,7 +315,7 @@ function finishBaseline(): void {
 
 function overlayFlick(info: any): void {
   overwolf.windows.sendMessage('in_game', 'flick', { type: info.type }, () => {});
-  logDebug(`FLICK ${info.type} · dur ${info.dur}ms · mag ${info.mag} · ajuste ${info.aligned} (umbral ${info.threshold})`);
+  logDebug(`FLICK ${info.type} · dur ${info.dur}ms · mag ${info.mag} · adjust ${info.aligned} (threshold ${info.threshold})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -289,13 +330,13 @@ function openWindow(name: string, cb?: () => void): void {
 
 function openOverlay(): void {
   openWindow('in_game', () => {
-    overlayVisible = true; log('overlay abierto');
+    overlayVisible = true; log('overlay opened');
     setTimeout(() => { sendOverlayConfig(); applyOverlaySize(); }, 300);
   });
 }
 
 function sendOverlayConfig(): void {
-  overwolf.windows.sendMessage('in_game', 'overlay-cfg', { scale: overlayScale, maxItems: overlayMaxItems, opacity: overlayOpacity }, () => {});
+  overwolf.windows.sendMessage('in_game', 'overlay-cfg', { scale: overlayScale, maxItems: overlayMaxItems, opacity: overlayOpacity, recoilLeft, recoilTop, recoilScale, lang }, () => {});
 }
 
 // Tamaño Y POSICIÓN del overlay = % de la resolución del juego (matchea cualquier pantalla).
@@ -321,7 +362,7 @@ function applyOverlaySize(): void {
 
 function toggleOverlay(): void {
   if (overlayVisible) {
-    overwolf.windows.hide('in_game', () => { overlayVisible = false; log('overlay oculto'); });
+    overwolf.windows.hide('in_game', () => { overlayVisible = false; log('overlay hidden'); });
   } else {
     openOverlay();
   }
@@ -353,21 +394,21 @@ function initGameDetection(): void {
   overwolf.games.getRunningGameInfo2((info: any) => {
     const gi = info && info.gameInfo;
     if (gi && gi.isRunning && gi.classId === VALORANT_ID) onValorantStart();
-    else log('Valorant no detectado todavia (abrilo y deberia engancharse)');
+    else log('Valorant not detected yet (open it and it should attach)');
   });
 }
 
 function onValorantStart(): void {
   if (valorantRunning) return;
   valorantRunning = true;
-  log('Valorant detectado -> registrando features y abriendo overlay');
+  log('Valorant detected -> registering features and opening overlay');
   setRequiredFeatures();
   openOverlay();
 }
 
 function onValorantStop(): void {
   valorantRunning = false;
-  log('Valorant cerrado');
+  log('Valorant closed');
   overwolf.windows.close('in_game', () => {});
   overlayVisible = false;
   timing = 'onDeath';
@@ -383,7 +424,7 @@ function setRequiredFeatures(retries = 30): void {
       log('setRequiredFeatures OK: ' + safe(res.supportedFeatures));
       return;
     }
-    log('setRequiredFeatures fallo (' + (res && res.error) + ')' + (retries > 0 ? ' -> reintento' : ''));
+    log('setRequiredFeatures failed (' + (res && res.error) + ')' + (retries > 0 ? ' -> retry' : ''));
     if (retries > 0) setTimeout(() => setRequiredFeatures(retries - 1), 2000);
   });
 }
@@ -407,7 +448,7 @@ function heartbeatGep(kind: string, payload: any): void {
   const now = Date.now();
   if (now - lastGepLog < 2000) return;
   lastGepLog = now;
-  log(`GEP: capturando Valorant (${gepCount} updates) ultimo ${kind}: ${safe(payload).slice(0, 160)}`);
+  log(`GEP: capturing Valorant (${gepCount} updates) last ${kind}: ${safe(payload).slice(0, 160)}`);
 }
 
 // payload onInfoUpdates2: { feature, info: { match_info | game_info: {...} }, ... }
@@ -428,7 +469,11 @@ function handleInfoUpdate(payload: any): void {
   if (info.me && info.me.abilities != null) {
     let ab: any = info.me.abilities;
     if (typeof ab === 'string') { try { ab = JSON.parse(ab); } catch (_) { ab = null; } }
-    if (ab) engine.setAbilities(ab);
+    if (ab) {
+      const s = JSON.stringify(ab);
+      if (s !== lastAbilities) { logDebug('ABILITIES ' + s); lastAbilities = s; } // debug: stream de disponibilidad
+      engine.setAbilities(ab);
+    }
   }
 
   const mi = info.match_info;
@@ -437,18 +482,26 @@ function handleInfoUpdate(payload: any): void {
       if (key.indexOf('scoreboard_') === 0) {
         try {
           const row = JSON.parse(mi[key]);
-          if (row.is_local && row.weapon) engine.setWeapon(cleanWeapon(row.weapon));
+          if (row.is_local && row.weapon) {
+            const w = cleanWeapon(row.weapon);
+            if (w !== lastWeapon) { logDebug('WEAPON -> ' + w + ' (from "' + row.weapon + '")'); lastWeapon = w; }
+            engine.setWeapon(w);
+          }
         } catch (_) {}
       }
     }
     // round_number: contador de ronda. Su CAMBIO dispara el recordatorio de habilidades (1 vez/ronda).
     if (mi.round_number) engine.setRoundNumber(mi.round_number);
-    // round_phase: shopping (compra) | combat (activo) | end / game_end (fin de ronda)
+    // round_phase: shopping (compra) | combat (activo) | end / game_end (fin de ronda).
+    // OJO: 'active' SOLO en combat (antes lo seteaba round_number, que viene siempre -> contaba habilidades
+    // en la compra). Ahora la fase de combate es limpia y el conteo de habilidades es correcto.
     if (mi.round_phase === 'end' || mi.round_phase === 'game_end') engine.setPhase('roundEnd');
     else if (mi.round_phase === 'shopping') engine.setPhase('buy');
-    else if (mi.round_phase === 'combat' || mi.round_number) engine.setPhase('active');
+    else if (mi.round_phase === 'combat') engine.setPhase('active');
   }
 }
+let lastAbilities = '';
+let lastWeapon = '';
 
 // Práctica (Range) -> feedback instantáneo (timer). Resto -> feedback al morir.
 function updateTiming(gameMode: string, scene: string): void {
@@ -461,9 +514,9 @@ function updateTiming(gameMode: string, scene: string): void {
   manageInstantTimer();
   // cambió el contexto (Range<->partida): limpiamos la lista + contadores del overlay para arrancar de cero.
   overwolf.windows.sendMessage('in_game', 'reset', {}, () => {});
-  const msg = live ? 'Feedback en vivo' : 'Modo partida — feedback al final de ronda';
+  const msg = t(live ? 'timing.live' : 'timing.match');
   overlayCal(msg, true);
-  log('TIMING: ' + msg + (gameMode ? ' (mode ' + gameMode + ')' : '') + (scene ? ' (scene ' + scene + ')' : ''));
+  log('TIMING: ' + (live ? 'live' : 'match') + (gameMode ? ' (mode ' + gameMode + ')' : '') + (scene ? ' (scene ' + scene + ')' : ''));
 }
 
 function manageInstantTimer(): void {
@@ -478,7 +531,7 @@ function handleGameEvents(payload: any): void {
     if (!ev || !ev.name) continue;
     logDebug('GEP-EVENT ' + ev.name + (ev.data !== undefined ? ' = ' + safe(ev.data).slice(0, 100) : ''));
     if (ev.name === 'match_info' && ev.data) tryRoundReport(ev.data);
-    if (ev.name === 'kill') { const cls = engine.pushKill(); log('KILL · contexto del tiro: ' + cls); }
+    if (ev.name === 'kill') { const cls = engine.pushKill(); log('KILL · shot context: ' + cls); }
     if (ev.name === 'headshot') engine.pushHeadshot();
     if (ev.name === 'death') engine.setPhase('dead');
     if (ev.name === 'match_end') engine.setPhase('roundEnd');
@@ -493,36 +546,132 @@ function tryRoundReport(data: any): void {
   } catch (_) {}
 }
 
+// Nombre de arma normalizado a lowercase (las keys de PATTERNS/DETERMINISTIC/baselines son lowercase).
 function cleanWeapon(internal: string): string {
   const parts = internal.split('_');
-  return parts[parts.length - 1];
+  return parts[parts.length - 1].toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
 // Stream de mouse (capturer C# por WebSocket)
 // ---------------------------------------------------------------------------
 // Lanza el capturer C# al iniciar la app, via el plugin Process Manager de Overwolf.
-// Requiere plugins/process_manager.dll (desbloqueado) y la ruta del .exe configurada.
+// El exe viene BUNDLEADO en el paquete (webpack -> dist/native/): como una app ow-native no puede
+// ejecutar un archivo desde dentro del paquete, se EXTRAE una vez a la carpeta escribible de la app
+// (appData) y se lanza desde ahí. `capturerPath` (config) queda como override manual para dev.
 function launchCapturer(): void {
   if (capturerLaunched || mouseConnected) return; // ya corriendo / ya hay stream
-  if (!capturerPath) {
-    log('CAPTURER: ruta no configurada — poné la ruta del MouseCapturer.exe en la config (o corrélo a mano)');
-    return;
-  }
+  if (capturerPath) { launchCapturerAt(capturerPath); return; } // override manual (dev)
+  ensureBundledCapturer((exePath) => {
+    if (exePath) launchCapturerAt(exePath);
+    else log('CAPTURER: could not prepare bundled exe — run AimCoach-MouseCapturer.exe manually or set the path in config');
+  });
+}
+
+// Extrae el exe bundleado a appData\capturer-<version>\ (una sola vez por versión) y devuelve su ruta
+// absoluta. La subcarpeta por versión hace que un update de la app re-extraiga el exe nuevo.
+function ensureBundledCapturer(cb: (exePath: string | null) => void): void {
+  overwolf.extensions.current.getManifest((mres: any) => {
+    const version = (mres && mres.meta && mres.meta.version) || '0';
+    const folder = 'capturer-' + version;
+    const space = overwolf.extensions.io.enums.StorageSpace.appData;
+    overwolf.extensions.io.getStoragePath(space, (sres: any) => {
+      if (!sres || !sres.success || !sres.path) { log('CAPTURER: failed to get storage path ' + (sres && sres.error)); cb(null); return; }
+      const dst = sres.path + '\\' + folder + '\\' + CAPTURER_EXE;
+      lastCapturerDst = dst; // para el diagnóstico del supervisor
+      overwolf.io.exist(dst, (exres: any) => {
+        if (exres && exres.success && exres.exist) { cb(dst); return; } // ya extraído (misma versión)
+        // aseguramos la carpeta y copiamos el exe una sola vez (el override reescribe si estaba a medias)
+        overwolf.extensions.io.createDirectory(space, folder, () => {
+          overwolf.io.copyFile(CAPTURER_SRC, dst, true, false, (cpres: any) => {
+            if (cpres && cpres.success) { log('CAPTURER: exe extracted to ' + dst); cb(dst); }
+            else { log('CAPTURER: copyFile failed (' + (cpres && cpres.error) + ') — did yarn build:native run before the build?'); cb(null); }
+          });
+        });
+      });
+    });
+  });
+}
+
+// Lanza el exe (ruta absoluta) via el plugin Process Manager. Requiere plugins/process_manager.dll desbloqueado.
+function launchCapturerAt(exePath: string): void {
   overwolf.extensions.current.getExtraObject('process-manager-plugin', (res: any) => {
     if (!res || !res.success || !res.object) {
-      log('CAPTURER: plugin process-manager no disponible (¿falta plugins/process_manager.dll desbloqueado?) ' + (res && res.error));
+      log('CAPTURER: process-manager plugin unavailable (missing unblocked plugins/process_manager.dll?) ' + (res && res.error));
       return;
     }
     try {
       // launchProcess(path, args, envJSON, hidden, closeWithApp, callback)
-      res.object.launchProcess(capturerPath, '', '{}', true, true, (r: any) => {
+      res.object.launchProcess(exePath, '', '{}', true, true, (r: any) => {
         if (r && r.error) log('CAPTURER: launchProcess error ' + r.error);
-        else { capturerLaunched = true; log('CAPTURER: lanzado via process-manager'); }
+        else { capturerLaunched = true; log('CAPTURER: launched via process-manager (' + exePath + ')'); }
       });
     } catch (e: any) {
-      log('CAPTURER: launchProcess excepcion ' + (e && e.message));
+      log('CAPTURER: launchProcess exception ' + (e && e.message));
     }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Supervisor del capturer: health-check cada CAPTURER_HEALTH_MS. Si el stream de mouse no está vivo,
+// cuenta un strike, intenta auto-curarse (re-lanza; re-extrae si borraron el exe) y, tras
+// CAPTURER_MAX_STRIKES seguidos, deja un log-trace de error decente (exportable) y lo marca en el overlay.
+// Se auto-limpia al reconectar. El diagnóstico se recalcula contra la versión actual -> sigue válido tras updates.
+// ---------------------------------------------------------------------------
+function startCapturerSupervisor(): void {
+  if (capturerHealthTimer) return;
+  capturerHealthTimer = setInterval(capturerHealthTick, CAPTURER_HEALTH_MS);
+}
+
+function capturerHealthTick(): void {
+  if (mouseConnected) { // sano o recuperado
+    if (capturerReported || capturerStrikes > 0) onCapturerRecovered();
+    capturerStrikes = 0; capturerReported = false;
+    return;
+  }
+  if (capturerReported) return; // ya reportado: no re-lanzamos en loop; el reconnect del WS lo engancha si vuelve
+  capturerStrikes++;
+  log('CAPTURER: no mouse stream (attempt ' + capturerStrikes + '/' + CAPTURER_MAX_STRIKES + ') — retrying launch');
+  capturerLaunched = false; // permitir re-lanzar (self-heal: ensureBundledCapturer re-extrae si el exe no está)
+  launchCapturer();
+  if (capturerStrikes >= CAPTURER_MAX_STRIKES) { capturerReported = true; reportCapturerFailure(); }
+}
+
+function onCapturerRecovered(): void {
+  log('CAPTURER: mouse stream restored');
+  // actualiza la marca del overlay (misma key -> reemplaza la fila del error por una en verde)
+  overwolf.windows.sendMessage('in_game', 'feedback', { prio: 25, msg: t('capturer.recovered'), key: 'capturer-down' }, () => {});
+}
+
+// Junta el estado real (versión, exe extraído, plugin) y deja un trace multi-línea con la causa probable.
+function reportCapturerFailure(): void {
+  overwolf.extensions.current.getManifest((m: any) => {
+    const version = (m && m.meta && m.meta.version) || '?';
+    const space = overwolf.extensions.io.enums.StorageSpace.appData;
+    overwolf.extensions.io.getStoragePath(space, (s: any) => {
+      const dst = lastCapturerDst || (((s && s.path) || '?') + '\\capturer-' + version + '\\' + CAPTURER_EXE);
+      overwolf.io.exist(dst, (e: any) => {
+        const exeExists = !!(e && e.success && e.exist);
+        overwolf.extensions.current.getExtraObject('process-manager-plugin', (p: any) => {
+          const pluginOk = !!(p && p.success && p.object);
+          const reason = !pluginOk ? 'process-manager plugin unavailable (missing unblocked plugins/process_manager.dll?)'
+            : !exeExists ? 'extracted exe is missing (deleted? extraction or build:native failed?)'
+              : 'exe exists but does not open the WebSocket (crashed / blocked by antivirus / port 9595 in use?)';
+          const trace = [
+            'CAPTURER ERROR — no mouse stream after ' + CAPTURER_MAX_STRIKES + ' attempts (~' + CAPTURER_MAX_STRIKES + ' min).',
+            '  likely cause: ' + reason,
+            '  app version: ' + version,
+            '  expected exe: ' + dst + ' (exists: ' + exeExists + ')',
+            '  process-manager plugin: ' + (pluginOk ? 'ok' : 'MISSING'),
+            '  WebSocket: ' + CAPTURER_WS + ' (connected: ' + mouseConnected + ')',
+            '  action: reinstall/update the app (re-extracts the exe) or run AimCoach-MouseCapturer.exe manually.',
+          ].join('\n');
+          log(trace);
+          // marca visible en el overlay (feedback crítico, deduplicado por key; se limpia al reconectar)
+          overwolf.windows.sendMessage('in_game', 'feedback', { prio: 97, msg: t('capturer.down'), key: 'capturer-down' }, () => {});
+        });
+      });
+    });
   });
 }
 
@@ -534,7 +683,7 @@ function connectMouseStream(): void {
     setTimeout(connectMouseStream, 1500);
     return;
   }
-  ws.onopen = () => { mouseConnected = true; log('CAPTURER: WebSocket conectado (' + CAPTURER_WS + ') — stream de mouse activo'); };
+  ws.onopen = () => { mouseConnected = true; log('CAPTURER: WebSocket connected (' + CAPTURER_WS + ') — mouse stream active'); };
   ws.onmessage = (msg: MessageEvent) => {
     try {
       const ev = JSON.parse(msg.data);
@@ -545,7 +694,7 @@ function connectMouseStream(): void {
       const now = Date.now();
       if (now - lastMouseLog > 3000) {
         lastMouseLog = now;
-        logDebug('CAPTURER: ' + mouseCount + ' eventos de mouse recibidos');
+        logDebug('CAPTURER: ' + mouseCount + ' mouse events received');
       }
     } catch (_) {}
   };

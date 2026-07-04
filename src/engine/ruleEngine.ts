@@ -12,8 +12,9 @@
 import { sprayGestureQuality, BaselineCalibrator } from './calibration';
 import * as recoil from './recoil';
 import * as agents from './agents';
+import { T } from './messages';
 import {
-  Feedback, CalProgress, FlickInfo, StrafeInfo, Baseline, RecoilCurve, EngineOptions,
+  Feedback, CalProgress, FlickInfo, StrafeInfo, Baseline, RecoilCurve, RecoilTrace, EngineOptions,
 } from './types';
 
 /* DEFAULT_BASELINE — baseline placeholder hasta que el usuario calibre (valores conservadores). */
@@ -55,6 +56,9 @@ const MACRO_WINDOW_MS = 150;       // ventana para detectar ráfaga de clicks in
 const MACRO_CLICKS = 5;            // clicks dentro de la ventana = posible macro / mouse defectuoso
 const PLACEMENT_LOW_STREAK = 2;    // rondas seguidas pegando A LAS PIERNAS/abajo -> aviso (apuntás muy bajo)
 const PLACEMENT_CHEST_STREAK = 3;  // rondas seguidas pegando AL PECHO (no cabeza) -> crosshair placement bajo
+const WARMUP_MS = 15000;           // ventana de "calentamiento" desde tu PRIMER tiro del contexto: en ese rato
+                                   // no opinamos (evita juzgar los primeros tiros de prueba = "cosas raras" al arrancar).
+                                   // Por tiempo (no por cantidad) para servir igual a taps rápidos y a sprays sueltos.
 
 /* Round — estado acumulado de la ventana actual (ronda en partida, o tramo en vivo en práctica). */
 interface Round {
@@ -98,10 +102,13 @@ class AimCoachEngine {
   onCalProgress: (p: CalProgress) => void;
   onFlick: (info: FlickInfo) => void;
   onStrafe: (info: StrafeInfo) => void;
+  onRecoilScored: (t: RecoilTrace) => void;
 
   baselines: { [weapon: string]: Baseline };
   weapon: string | null;         // arma equipada según GEP (solo llega en partidas)
   deadTime: boolean;
+  private _inCombat = false;     // fase de combate: SOLO acá contamos usos de habilidad (no en la compra)
+  private _ctxWarmUntil = 0;     // fin del warm-up del contexto (Date.now()+WARMUP_MS, seteado en el primer tiro; 0 = sin tirar aún)
 
   private _calWeapon: string | null;
   private _countsPerDegree: number;   // conversión counts<->grados (de la sens del usuario)
@@ -128,6 +135,7 @@ class AimCoachEngine {
   private _flickMag: number;
   private _practiceWeapon: string | null; // fallback de arma cuando GEP no la da (Range)
   private _timing: 'instant' | 'onDeath'; // 'instant' (práctica/range) | 'onDeath' (partidas)
+  private _lang: 'es' | 'en' = 'es';       // idioma de los mensajes del overlay
   private _agent: string | null;          // codename del agente (GEP me.agent)
   private _abilities: { [key: string]: boolean } | null; // disponibilidad previa (GEP me.abilities)
   private _roundNumber: number | null;    // ronda actual (GEP round_number)
@@ -157,6 +165,7 @@ class AimCoachEngine {
     this.onCalProgress = opts.onCalProgress || (() => {});
     this.onFlick = opts.onFlick || (() => {});
     this.onStrafe = opts.onStrafe || (() => {});
+    this.onRecoilScored = opts.onRecoilScored || (() => {});
     this.baselines = opts.baselines || {};       // baseline POR ARMA: { vandal: {...}, phantom: {...} }
     this._calWeapon = null;
     this._countsPerDegree = 0;
@@ -215,13 +224,15 @@ class AimCoachEngine {
   /* setRecoilRefs — referencias de recoil por arma (auto-capturadas). */
   setRecoilRefs(map: { [weapon: string]: RecoilCurve }): void { this._recoilRefs = map || {}; }
 
-  /* _recoilRef — referencia de recoil + su fuente, para puntuar distinto según de dónde viene. */
+  /* _recoilRef — referencia de recoil + su fuente. PRIORIDAD al patrón capturado (real, ground-truth);
+   * la referencia personal (auto-capturada) queda solo como fallback para armas sin patrón cargado.
+   */
   private _recoilRef(weapon: string | null): { ref: RecoilCurve; source: 'personal' | 'datamined' } | null {
     if (!weapon) return null;
-    const personal = this._recoilRefs[weapon];
-    if (personal) return { ref: personal, source: 'personal' };
     const datamined = recoil.PATTERNS[weapon];
     if (datamined) return { ref: datamined, source: 'datamined' };
+    const personal = this._recoilRefs[weapon];
+    if (personal) return { ref: personal, source: 'personal' };
     return null;
   }
 
@@ -229,6 +240,13 @@ class AimCoachEngine {
   private _activeBaseline(): Baseline {
     const w = this._activeWeapon();
     return (w && this.baselines[w]) || DEFAULT_BASELINE;
+  }
+
+  /* _hasBaseline — ¿hay baseline REAL calibrado para el arma efectiva? (si no, _activeBaseline cae al
+   * DEFAULT y las reglas relativas al baseline no significan nada -> no se disparan). */
+  private _hasBaseline(): boolean {
+    const w = this._activeWeapon();
+    return !!(w && this.baselines[w]);
   }
 
   // -------- modo calibración (por arma) --------
@@ -278,8 +296,28 @@ class AimCoachEngine {
    *  'onDeath' -> partidas: evaluado y mostrado al terminar la ronda
    */
   setFeedbackTiming(mode: string): void {
-    this._timing = mode === 'instant' ? 'instant' : 'onDeath';
+    const next = mode === 'instant' ? 'instant' : 'onDeath';
+    if (next !== this._timing) this.resetContext(); // cambió el contexto (Range<->partida): re-calentar
+    this._timing = next;
   }
+
+  /* resetContext — arranca de cero el warm-up + la ventana acumulada y limpia el dedup. Lo llama el
+   * background al cambiar de contexto o cuando el usuario limpia el overlay a mano (así el próximo feedback
+   * se ve enseguida, ej. tras cambiar de idioma). NO borra baselines ni progreso de calibración.
+   */
+  resetContext(): void {
+    this._ctxWarmUntil = 0;
+    this._round = this._emptyRound();
+    this._pending = [];
+    this._recentMsgs = {};
+    this._flickStreakType = null;
+    this._flickStreakCount = 0;
+  }
+
+  /* setLang — idioma de los mensajes de coaching del overlay ('es' | 'en'). */
+  setLang(lang: string): void { this._lang = lang === 'en' ? 'en' : 'es'; }
+  /* _t — texto de mensaje en el idioma actual (ver messages.ts). */
+  private _t(key: string, params?: { [k: string]: string | number }): string { return T(key, this._lang, params); }
 
   /* setAgent — agente equipado (GEP me.agent, codename interno). Para el recordatorio de habilidades. */
   setAgent(agent: string | null): void {
@@ -295,8 +333,9 @@ class AimCoachEngine {
   setAbilities(map: { [key: string]: boolean }): void {
     if (!map || typeof map !== 'object') return;
     const prev = this._abilities;
-    // No contamos usos mientras estás muerto (al morir GEP puede tirar las disponibilidades a false).
-    if (prev && !this.deadTime) {
+    // SOLO contamos en combate: en la compra los cambios de disponibilidad son por COMPRAR, no por usar
+    // (ese era el bug: se contaba cualquier cosa). Muerto tampoco (GEP tira todo a false al morir).
+    if (prev && this._inCombat) {
       for (const k of ['C', 'Q', 'E', 'X']) {
         if (prev[k] === true && map[k] === false) {
           const lk = k.toLowerCase();
@@ -309,6 +348,9 @@ class AimCoachEngine {
 
   setPhase(phase: string): void {
     this.deadTime = phase === 'buy' || phase === 'dead' || phase === 'roundEnd';
+    // combate = ventana donde contamos usos de habilidad (fuera de acá, los cambios son compra/respawn).
+    if (phase === 'active') this._inCombat = true;
+    else if (phase === 'buy' || phase === 'roundEnd' || phase === 'dead') this._inCombat = false;
     // En partidas el feedback se muestra al TERMINAR la ronda (se ve completo en la fase de compra).
     if (this._timing === 'onDeath' && phase === 'roundEnd') this._flush();
   }
@@ -336,9 +378,7 @@ class AimCoachEngine {
       .map(k => { const n = agents.abilityName(this._agent, k); return n ? `${n} (${k})` : k; })
       .join(' · ');
     const skippedLast = this._lastRoundAbilities === 0; // la ronda pasada no usaste ninguna
-    const msg = skippedLast
-      ? `${agent}: la ronda pasada no usaste ninguna — usá ${names}`
-      : `${agent}: preparate — ${names}`;
+    const msg = this._t(skippedLast ? 'abilityPre.skipped' : 'abilityPre.short', { agent, names });
     this._queue(skippedLast ? 60 : 42, msg, msg, 'ability-pre');
     this._surface();
   }
@@ -386,9 +426,11 @@ class AimCoachEngine {
   private _evalHsRate(): void {
     const rate = this._hsKillCount / this._killCount;
     if (rate < 0.3) {
-      this._queue(66, 'Pocos headshots — subí la mira', `${Math.round(rate * 100)}% de tus kills a la cabeza (${this._hsKillCount}/${this._killCount}). Pre-aimeá a altura de cabeza.`, 'hs-rate');
+      const p = { pct: Math.round(rate * 100), hs: this._hsKillCount, kills: this._killCount };
+      this._queue(66, this._t('hsRate.bad.short'), this._t('hsRate.bad.detail', p), 'hs-rate');
     } else if (rate >= 0.5) {
-      this._queue(30, `Buenos headshots ✓ (${Math.round(rate * 100)}%)`, `${this._hsKillCount}/${this._killCount} kills a la cabeza. Mantené esa altura de mira.`, 'hs-rate');
+      const p = { pct: Math.round(rate * 100), hs: this._hsKillCount, kills: this._killCount };
+      this._queue(30, this._t('hsRate.good.short', p), this._t('hsRate.good.detail', p), 'hs-rate');
     }
     this._surface();
   }
@@ -406,10 +448,11 @@ class AimCoachEngine {
     const cls = recent ? ls!.class : 'sin-tiro-reciente';
     if (recent && (ls!.class === 'counter' || ls!.class === 'moviendo')) {
       this._round.killsGood++;
-      this._queue(35, 'Kill en movimiento ✓', `Kill ${ls!.class === 'counter' ? 'counter-strafeando' : 'moviéndote'} — móvil y preciso.`, 'kill-good');
+      const ctx = this._t(ls!.class === 'counter' ? 'killCtx.counter' : 'killCtx.moving');
+      this._queue(35, this._t('killGood.short'), this._t('killGood.detail', { ctx }), 'kill-good');
       this._surface();
     } else if (recent && ls!.class === 'quieto') {
-      this._queue(34, 'Kill quieto — movete más', 'Mataste parado: bien, pero sos predecible.', 'kill-static');
+      this._queue(34, this._t('killStatic.short'), this._t('killStatic.detail'), 'kill-static');
       this._surface();
     }
     return cls;
@@ -458,6 +501,7 @@ class AimCoachEngine {
 
     // strafe: clasificar el CONTEXTO de movimiento del tiro
     this._round.shots++;
+    if (!this._ctxWarmUntil) this._ctxWarmUntil = Date.now() + WARMUP_MS; // arranca el warm-up en tu primer tiro del contexto
     const moving = this._anyMoveHeld();
     const sinceStop = this._moveStopT ? (ev.t - this._moveStopT) : 999999;
     let sclass: StrafeInfo['class'];
@@ -582,18 +626,8 @@ class AimCoachEngine {
 
     if (this._flickStreakCount >= FLICK_STREAK_N) {
       // Ya descontamos pulso/velocidad: si son N seguidos del mismo tipo, es un PATRON, no error puntual.
-      let short: string, detail: string;
-      if (type === 'pasado') {
-        short = 'Bajá la sens ~10% — te pasás seguido';
-        detail = `${FLICK_STREAK_N} flicks pasados seguidos (ya descartando pulso): patrón de sens, no error puntual.`;
-      } else if (type === 'flojo') {
-        short = 'Subí la sens ~10% — te quedás corto';
-        detail = `${FLICK_STREAK_N} flicks flojos seguidos (ya descartando pulso): patrón de sens, no error puntual.`;
-      } else {
-        short = 'Sé más rápido — apuntá y dispará, no trackees';
-        detail = `${FLICK_STREAK_N} flicks lentos seguidos: llegás bien pero tarde. Snap al objetivo, no lo persigas.`;
-      }
-      this._queue(95, short, detail, type === 'lento' ? 'speed-rec' : 'sens-rec');
+      const k = type === 'pasado' ? 'streak.pasado' : type === 'flojo' ? 'streak.flojo' : 'streak.lento';
+      this._queue(95, this._t(`${k}.short`), this._t(`${k}.detail`, { n: FLICK_STREAK_N }), type === 'lento' ? 'speed-rec' : 'sens-rec');
       if (this._timing === 'instant') this._surface();
       this._flickStreakCount = 0; // evitar repetir cada flick
     }
@@ -606,63 +640,76 @@ class AimCoachEngine {
     this._recentClicks.push(t);
     this._recentClicks = this._recentClicks.filter(ct => t - ct <= MACRO_WINDOW_MS);
     if (this._recentClicks.length >= MACRO_CLICKS) {
-      this._queue(99, '⚠ Posible macro o mouse fallando', `${this._recentClicks.length} clicks en ${MACRO_WINDOW_MS}ms — riesgo de ban. Revisá tu mouse/configuración.`, 'macro');
+      this._queue(99, this._t('macro.short'), this._t('macro.detail', { n: this._recentClicks.length, ms: MACRO_WINDOW_MS }), 'macro');
       this._surface();
       this._recentClicks = [];
     }
   }
 
-  /* _scoreRecoil — puntúa un spray sostenido contra la referencia de recoil del arma equipada. */
+  /* _scoreRecoil — puntúa el CONTROL de recoil de un spray sostenido. Solo mide la fase DETERMINISTA
+   * (primeras N balas, no-RNG); después el spread es aleatorio y no se juzga como control.
+   */
   private _scoreRecoil(): void {
+    if (this._ctxWarmUntil && Date.now() < this._ctxWarmUntil) return; // warm-up: no puntuar los primeros sprays de prueba
     const w = this._activeWeapon();
     const r = this._recoilRef(w);
     if (!r) return;
     const curve = recoil.curveFromHold(this._holdMoves, this._holdStart, w!, this._countsPerDegree);
-    const res = recoil.scoreSpray(curve, r.ref);
+    const det = recoil.DETERMINISTIC[w!] || recoil.DEFAULT_DETERMINISTIC;
+    const res = recoil.scoreSpray(curve, r.ref, { deterministic: det });
     if (!res) return;
+    // traza para el "Recoil Trainer" de la config (tu recorrido vs el patrón; det = hasta dónde es controlable)
+    if (curve) this.onRecoilScored({ weapon: w, source: r.source, score: res.score, phase: res.phase, segment: res.segment, curve, ref: r.ref, deterministic: det });
     const cuts = RECOIL_CUTS[r.source] || RECOIL_CUTS.personal;
-    const vs = r.source === 'personal' ? 'tu referencia' : 'el patrón real';
     if (res.score >= cuts.good) {
-      this._queue(28, `Recoil dominado (${res.score}%)`, `Control de recoil ${res.score}% vs ${vs}. Así.`, 'recoil-score');
+      this._queue(28, this._t('recoilGood.short', { score: res.score }), this._t('recoilGood.detail', { det, score: res.score }), 'recoil-score');
     } else if (res.score < cuts.bad) {
-      const where = res.phase === 'horizontal' ? 'el tramo horizontal (contrá el spread)' : 'el pull vertical (bajá más parejo)';
-      this._queue(75, `Recoil ${res.score}% — mejorá ${res.phase === 'horizontal' ? 'el horizontal' : 'el pull'}`,
-        `Control ${res.score}% vs ${vs}: te desviaste en ${where}.`, 'recoil-score');
+      // eje (qué corregir) + tramo (dónde de la fase controlable lo perdés)
+      const axis = this._t(res.phase === 'horizontal' ? 'axis.horizontal' : 'axis.pull');
+      const axisDetail = this._t(res.phase === 'horizontal' ? 'axisDetail.horizontal' : 'axisDetail.pull');
+      const seg = res.segment ? this._t('seg.' + res.segment) : '';
+      this._queue(75, this._t('recoilBad.short', { score: res.score, axis, seg }),
+        this._t('recoilBad.detail', { det, score: res.score, axisDetail, seg }), 'recoil-score');
     }
     if (this._timing === 'instant') this._surface();
   }
 
   // -------- reglas (todas relativas al baseline personal) --------
   private _evaluateRoundRules(): void {
+    // Warm-up: en los primeros WARMUP_MS desde tu primer tiro no opinamos (evita "cosas raras" al arrancar).
+    // Macro (riesgo de ban) NO pasa por acá: siempre se avisa.
+    if (this._ctxWarmUntil && Date.now() < this._ctxWarmUntil) return;
+
     const r = this._round, b = this._activeBaseline();
+    const hasBaseline = this._hasBaseline(); // R2/R3/R4 comparan contra TU baseline: sin calibrar no significan nada
 
     // R1: spam de clicks
     if (r.shortICIs >= 4) {
-      this._queue(70, 'Tapeá más controlado', `Spam de clicks (${r.shortICIs} disparos muy seguidos). Dejá estabilizar el crosshair entre tiros.`, 'spam');
+      this._queue(70, this._t('spam.short'), this._t('spam.detail', { n: r.shortICIs }), 'spam');
     }
 
-    // R2: recoil por debajo de TU baseline (pull flojo)
+    // R2: recoil por debajo de TU baseline (pull flojo) — solo con baseline calibrado
     const weakSprays = r.sprays.filter(s => s.pullPerMs < b.pullPerMsFloor && s.durationMs > 200);
-    if (weakSprays.length >= 2) {
+    if (hasBaseline && weakSprays.length >= 2) {
       const avg = (weakSprays.reduce((a, s) => a + s.pullPerMs, 0) / weakSprays.length).toFixed(2);
-      this._queue(85, 'Bajá el recoil más parejo', `Recoil flojo: pull ${avg} vs tu baseline ${b.pullPerMsBaseline}. Estás tirando más flojo de lo que sabés.`, 'recoil');
+      this._queue(85, this._t('recoilWeak.short'), this._t('recoilWeak.detail', { avg, baseline: b.pullPerMsBaseline }), 'recoil');
     }
 
-    // R3: gesto poco monótono (metiendo correcciones hacia arriba en pleno spray)
+    // R3: gesto poco monótono (metiendo correcciones hacia arriba en pleno spray) — solo con baseline calibrado
     const jerky = r.sprays.filter(s => s.monotonicity < b.monotonicityFloor && s.durationMs > 200);
-    if (jerky.length >= 2) {
-      this._queue(78, 'Pull-down en una sola dirección', `Pull-down errático (monotonía ${jerky[0].monotonicity} vs ${b.monotonicityBaseline}). Sin micro-correcciones arriba.`, 'jerky');
+    if (hasBaseline && jerky.length >= 2) {
+      this._queue(78, this._t('jerky.short'), this._t('jerky.detail', { mono: jerky[0].monotonicity, base: b.monotonicityBaseline }), 'jerky');
     }
 
-    // R4: overshoot anómalo respecto a TU distribución personal
+    // R4: overshoot anómalo respecto a TU distribución personal — solo con baseline calibrado
     const realOver = r.overshoots.filter(o => o !== 0);
-    if (realOver.length >= 3) {
+    if (hasBaseline && realOver.length >= 3) {
       const mean = realOver.reduce((a, o) => a + o, 0) / realOver.length;
       const deviation = mean - b.flickBias;
       if (Math.abs(deviation) > 1.5 * b.flickStd) {
-        const short = deviation > 0 ? 'Frená un toque el flick' : 'Llegá un toque más con el flick';
-        const dir = deviation > 0 ? 'pasándote' : 'quedándote corto';
-        this._queue(75, short, `Flicks ${dir} (desvío ${Math.round(deviation)} counts vs tu sesgo ${b.flickBias}).`, 'flick-bias');
+        const short = this._t(deviation > 0 ? 'flickBias.over.short' : 'flickBias.under.short');
+        const dir = this._t(deviation > 0 ? 'flickBias.dir.over' : 'flickBias.dir.under');
+        this._queue(75, short, this._t('flickBias.detail', { dir, dev: Math.round(deviation), bias: b.flickBias }), 'flick-bias');
       }
     }
 
@@ -671,7 +718,7 @@ class AimCoachEngine {
     const deliberate = r.flicks.filter(f => (f.flickMag || 0) >= MIN_FLICK_MAG && (f.flickDur || 0) >= SLOW_FLICK_MS);
     const rushed = deliberate.filter(f => !f.settledBeforeClick);
     if (deliberate.length >= 3 && rushed.length / deliberate.length > 0.7) {
-      this._queue(72, 'Frená antes de tirar (tiros lentos)', `${rushed.length}/${deliberate.length} tiros apuntados sin frenar antes del click.`, 'rushed');
+      this._queue(72, this._t('rushed.short'), this._t('rushed.detail', { rushed: rushed.length, deliberate: deliberate.length }), 'rushed');
     }
 
     // R7: resumen de precisión de flicks (flojo / perfecto / pasado)
@@ -683,28 +730,22 @@ class AimCoachEngine {
       const ok = fc.filter(t => t === 'perfecto').length;
       if (flojo + pasado + lento > ok) {
         // el peor problema define el consejo
-        let short: string;
-        if (lento >= flojo && lento >= pasado) short = 'Sé más rápido con los flicks';
-        else if (pasado >= flojo) short = 'En general te pasás — frená el flick';
-        else short = 'En general te quedás corto — llegá más';
-        this._queue(65, short, `Flicks: ${ok} perfectos · ${flojo} flojos · ${pasado} pasados · ${lento} lentos.`, 'flick-summary');
+        const sk = (lento >= flojo && lento >= pasado) ? 'summary.lento.short' : pasado >= flojo ? 'summary.pasado.short' : 'summary.flojo.short';
+        this._queue(65, this._t(sk), this._t('summary.detail', { ok, flojo, pasado, lento }), 'flick-summary');
       }
     }
 
     // R8: contexto de movimiento al disparar.
     if (r.shots >= 6) {
       if (r.shotsMoving / r.shots > MOVE_SHOT_RATIO) {
-        this._queue(80, 'Frená al disparar (counter-strafe)',
-          `${r.shotsMoving}/${r.shots} tiros caminando. Movete, pero soltá/revertí la tecla un instante antes de tirar.`, 'strafe-move');
+        this._queue(80, this._t('strafeMove.short'), this._t('strafeMove.detail', { moving: r.shotsMoving, shots: r.shots }), 'strafe-move');
       } else if (r.shotsStatic / r.shots > 0.6) {
-        this._queue(78, 'Te estás quedando quieto — movete',
-          `${r.shotsStatic}/${r.shots} tiros parado. Sos predecible: movete entre disparos y counter-strafeá.`, 'strafe-static');
+        this._queue(78, this._t('strafeStatic.short'), this._t('strafeStatic.detail', { static: r.shotsStatic, shots: r.shots }), 'strafe-static');
       }
     }
     // Refuerzo positivo: kills counter-strafeando (móvil + preciso = lo ideal).
     if (r.killsGood >= 2) {
-      this._queue(30, `Buenos kills en movimiento (${r.killsGood})`,
-        `Mataste counter-strafeando ${r.killsGood} veces. Eso es lo ideal: móvil y preciso.`, 'strafe-kill');
+      this._queue(30, this._t('strafeKill.short', { n: r.killsGood }), this._t('strafeKill.detail', { n: r.killsGood }), 'strafe-kill');
     }
 
     // Habilidades: nudge SOLO en partidas (en práctica molestaría). Uso REAL de GEP (no teclado).
@@ -713,10 +754,8 @@ class AimCoachEngine {
       const names = ['C', 'Q', 'E']
         .map(k => { const n = agents.abilityName(this._agent, k); return n ? `${n} (${k})` : null; })
         .filter(Boolean).join(' · ');
-      const detail = names
-        ? `No usaste ninguna habilidad esta ronda. Tenías: ${names} — inflan tu impacto.`
-        : 'Recordá usar tus habilidades (C/Q/E) — inflan tu impacto en la ronda.';
-      this._queue(40, 'No usaste habilidades', detail, 'abilities');
+      const detail = names ? this._t('abilities.named', { names }) : this._t('abilities.generic');
+      this._queue(40, this._t('abilities.short'), detail, 'abilities');
     }
 
     // R6: round_report de Overwolf -> crosshair placement (ancla de resultado, grueso)
@@ -734,7 +773,7 @@ class AimCoachEngine {
           this._chestStreak = 0;
           this._lowStreak++;
           if (this._lowStreak >= PLACEMENT_LOW_STREAK) {
-            this._queue(72, 'Subí la mira — apuntás muy bajo', `Hace ${this._lowStreak} rondas pegás a las piernas/abajo.`, 'placement');
+            this._queue(72, this._t('placement.low.short'), this._t('placement.low.detail', { n: this._lowStreak }), 'placement');
             this._lowStreak = 0;
           }
         } else if (hsRatio < 0.3 && bodyRatio >= 0.5) {
@@ -742,13 +781,13 @@ class AimCoachEngine {
           this._lowStreak = 0;
           this._chestStreak++;
           if (this._chestStreak >= PLACEMENT_CHEST_STREAK) {
-            this._queue(70, 'Mirá a la CABEZA, no al pecho', `Hace ${this._chestStreak} rondas pegás al pecho. Crosshair placement: pre-aimeá a altura de cabeza.`, 'placement');
+            this._queue(70, this._t('placement.chest.short'), this._t('placement.chest.detail', { n: this._chestStreak }), 'placement');
             this._chestStreak = 0;
           }
         } else if (hsRatio >= 0.4) {
           // buena altura de mira
           this._lowStreak = 0; this._chestStreak = 0;
-          this._queue(20, 'Buen placement 👍', `${hs}/${total} a la cabeza. Mantenelo.`, 'placement-ok');
+          this._queue(20, this._t('placementOk.short'), this._t('placementOk.detail', { hs, total }), 'placement-ok');
         }
         // rondas mixtas/intermedias: no incrementan ni resetean (ni premio ni castigo)
       }

@@ -34,6 +34,13 @@ module.exports = {
           to: './',
           globOptions: { ignore: ['**/*.html'] },
         },
+        // Capturer C# bundleado en el paquete -> el background lo extrae a appData y lo auto-lanza.
+        // noErrorOnMissing: en dev sin `yarn build:native` el build no falla (se corre el .exe a mano).
+        {
+          from: path.resolve(__dirname, 'native/publish/AimCoach-MouseCapturer.exe'),
+          to: path.resolve(__dirname, 'dist/native/AimCoach-MouseCapturer.exe'),
+          noErrorOnMissing: true,
+        },
       ],
     }),
     new HtmlWebpackPlugin({

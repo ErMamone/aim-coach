@@ -10,7 +10,8 @@
   "scripts": {
     "build": "webpack",
     "watch": "webpack --watch",
-    "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/publish"
+    "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o native/publish",
+    "build:all": "yarn build:native && yarn build"
   },
   "devDependencies": {
     "@overwolf/types": "^3.23.1",

@@ -17,7 +17,7 @@ const move = (dx: number, dy: number) => engine.pushMouse({ t, dx, dy, a: 'move'
 const down = () => engine.pushMouse({ t, dx: 0, dy: 0, a: 'down', b: 'left' });
 const up = () => engine.pushMouse({ t, dx: 0, dy: 0, a: 'up', b: 'left' });
 
-console.log('=== Ronda 1: jugador sub-compensa recoil en sprays con Vandal ===');
+console.log('=== Round 1: player under-compensates recoil on Vandal sprays ===');
 engine.setWeapon('Vandal');
 engine.setPhase('active');
 
@@ -32,7 +32,7 @@ for (let s = 0; s < 2; s++) {
 // round_report de Overwolf: muchos hits pero casi nada a la cabeza -> apunta bajo
 engine.pushRoundReport({ damage: 280, hit: 8, headshot: 1, final_headshot: 0, bodyshots: 5, legshots: 2 });
 
-console.log('\n=== Ronda 2: jugador spamea clicks y dispara sin estabilizar ===');
+console.log('\n=== Round 2: player spams clicks and shoots without settling ===');
 engine.setWeapon('Sheriff');
 engine.setPhase('active');
 
@@ -45,7 +45,7 @@ for (let i = 0; i < 5; i++) {
 }
 engine.pushRoundReport({ damage: 150, hit: 3, headshot: 0, final_headshot: 1, bodyshots: 2, legshots: 0 });
 
-console.log('\n=== Ronda 3: jugador limpio (control de recoil OK, buen placement) ===');
+console.log('\n=== Round 3: clean player (recoil control OK, good placement) ===');
 engine.setWeapon('Phantom');
 engine.setPhase('active');
 down();
@@ -56,4 +56,4 @@ tick(500);
 move(2, 1); tick(120); down(); tick(15); up();
 engine.pushRoundReport({ damage: 300, hit: 5, headshot: 3, final_headshot: 1, bodyshots: 1, legshots: 0 });
 
-console.log('\n(fin)');
+console.log('\n(end)');

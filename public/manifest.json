@@ -1,7 +1,7 @@
 {
   "manifest_version": "1",
   "type": "WebApp",
-  "permissions": ["Extensions", "Hotkeys", "GameInfo"],
+  "permissions": ["Extensions", "Hotkeys", "GameInfo", "FileSystem"],
   "meta": {
     "name": "Aim Coach",
     "version": "0.1.0",

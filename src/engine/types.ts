@@ -39,8 +39,17 @@ export type RecoilCurve = RecoilPoint[];
 
 /* RecoilScore — resultado de puntuar un spray contra la referencia. */
 export interface RecoilScore {
-  score: number;                          // 0–100 (100 = calcó la referencia)
-  phase: 'vertical' | 'horizontal' | null; // dónde se desvió más (para el consejo)
+  score: number;                          // 0–100 (100 = control perfecto)
+  phase: 'vertical' | 'horizontal' | null; // EJE donde más se desvió (para el consejo)
+  segment: 'early' | 'mid' | 'late' | null; // TRAMO del spray donde más se desvió el vertical
+}
+
+/* ScoreOptions — opciones de scoring.
+ *  deterministic = cuántas balas iniciales son CONTROLABLES (no-RNG); solo esas se puntúan. Después es
+ *                  spread aleatorio (ráfaga) que no se puede controlar y no se juzga.
+ */
+export interface ScoreOptions {
+  deterministic?: number;
 }
 
 /* SprayQuality — métricas de calidad del gesto de un spray (sin patrón dataminado). */
@@ -102,12 +111,27 @@ export interface CalProgress {
   accepted?: boolean;
 }
 
+/* RecoilTrace — datos para dibujar la traza del spray: tu recorrido vs el patrón ideal + el score.
+ * curve y ref están en GRADOS (comparables directamente). Lo consume el "Recoil Trainer" de la config.
+ */
+export interface RecoilTrace {
+  weapon: string | null;
+  source: 'personal' | 'datamined';
+  score: number;
+  phase: RecoilScore['phase'];
+  segment: RecoilScore['segment'];
+  curve: RecoilCurve;    // tu recorrido (compensación real)
+  ref: RecoilCurve;      // el patrón/referencia esperado
+  deterministic: number; // hasta qué bala es controlable (el resto es spread RNG)
+}
+
 /* EngineOptions — dependencias/estado inicial que se le inyecta al motor (callbacks estilo listener). */
 export interface EngineOptions {
   onFeedback?: (f: Feedback) => void;
   onCalProgress?: (p: CalProgress) => void;
   onFlick?: (info: FlickInfo) => void;
   onStrafe?: (info: StrafeInfo) => void;
+  onRecoilScored?: (t: RecoilTrace) => void;
   baselines?: { [weapon: string]: Baseline };
   recoilRefs?: { [weapon: string]: RecoilCurve };
 }
