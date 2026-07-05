@@ -31,7 +31,9 @@ module.exports = {
           context: path.resolve(__dirname, 'public/'),
           from: './',
           to: './',
-          globOptions: { ignore: ['**/*.html'] },
+          // .html los maneja HtmlWebpackPlugin; .md/notas y el MASTER del logo (fuente, ya se derivan
+          // icon.png/icon_gray.png/desktop_icon.ico via 'yarn icons') no van al build -> OPK limpio.
+          globOptions: { ignore: ['**/*.html', '**/*.md', '**/*.markdown', '**/*.txt', '**/aim-coach-logo.png'] },
         },
         // Capturer C# bundleado en el paquete -> el background lo extrae a appData y lo auto-lanza.
         // noErrorOnMissing: en dev sin `yarn build:native` el build no falla (se corre el .exe a mano).
