@@ -12,6 +12,8 @@
     "watch": "webpack --watch",
     "build:native": "dotnet publish native/MouseCapturer.csproj -c Release -r win-x64 --self-contained -o native/publish",
     "build:all": "yarn build:native && yarn build",
+    "package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-opk.ps1",
+    "icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/gen-icons.ps1",
     "test": "tsc -p tests/tsconfig.json && node .tmp-tests/tests/engine/run.js",
     "test:coverage": "tsc -p tests/tsconfig.json && c8 node .tmp-tests/tests/engine/run.js",
     "lint": "eslint . --max-warnings=0",

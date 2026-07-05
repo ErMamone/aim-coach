@@ -14,6 +14,11 @@ node_modules/
 dist/
 build/
 
+# Empaquetado OPK (se regenera con `yarn package`)
+release/
+.opk-stage/
+*.opk
+
 # Salida de tests / demos compilados (tsc -> node) + cobertura
 .tmp-tests/
 .tmp/
@@ -27,11 +32,18 @@ native/obj/
 native/bin/
 native/publish/
 
-# Herramientas de Claude Code (no forman parte del proyecto)
+# IA / asistentes de código — no forman parte del producto (fuera del repo y del OPK)
 .claude/
 CLAUDE.md
-docs/
 AGENTS.md
+.cursor/
+.cursorrules
+.aider*
+.windsurfrules
+.github/copilot-instructions.md
+
+# Docs internos (se mantienen locales, no se publican)
+docs/
 
 # Logs / varios
 *.log

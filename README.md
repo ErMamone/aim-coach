@@ -60,18 +60,21 @@ el cliente WebSocket.
 ## Empaquetado: un solo activador (OPK)
 
 No existe un .exe standalone de una app Overwolf; corre dentro del cliente. Pero el OPK +
-process-manager + auto-launch da el efecto "una sola cosa activa todo":
+process-manager + auto-launch da el efecto "una sola cosa activa todo". **El proceso está automatizado:**
 
-1. **Bundleá `overwolf.js`** -> `background.js` (esbuild, ver arriba).
-2. **Conseguí `process_manager.dll`** del repo oficial overwolf/overwolf-plugins (carpeta `dist/`).
-   Ponelo en `overlay/plugins/process_manager.dll`. **Desbloqueá el DLL**: click derecho ->
-   Propiedades -> tildar "Desbloquear". Si no, Overwolf no lo carga y la app crashea.
-   Verificá el nombre de clase exacto del plugin contra el sample manifest del repo.
-3. **Compilá el capturador** y metelo en el OPK: `overlay/AimCoach-MouseCapturer.exe`.
-   - Liviano (depende del runtime .NET 8 en la maquina): `dotnet publish -c Release`.
-   - Sin dependencias (OPK pesado, ~60MB+): publish self-contained single-file.
-4. **Armá el OPK**: ZIP de todo el contenido de `overlay/` (manifest en la raiz), compresion Normal
-   (no maxima), y renombrá .zip -> .opk. Doble clic lo instala.
+```
+yarn build:all   # capturer C# (~11MB, self-contained) + webpack -> dist/ (capturer bundleado en dist/native/)
+yarn package     # empaqueta dist/ -> release/AimCoach-<version>.opk (ver docs/PLAYBOOK.md)
+```
+
+`yarn package` (script `scripts/package-opk.ps1`) valida `dist/`, genera un manifest de producción (apaga
+dev tools), y comprime a `.opk` con rutas ZIP estándar. El **capturer ya viene self-contained** (NO requiere
+.NET instalado en la PC del usuario) y se **auto-extrae + auto-lanza** desde el background (no hay que setear
+rutas ni correrlo a mano).
+
+Gotchas: el `process_manager.dll` (de overwolf/overwolf-plugins) tiene que estar **desbloqueado** si se bajó
+de internet (click derecho → Propiedades → Desbloquear). Un `.opk` de fuera del store **solo instala en
+cuentas whitelisteadas**; para todos, va por el store de Overwolf (tras el review). Ver [docs/SUPPORT.md](docs/SUPPORT.md).
 
 Con eso: el tester instala el OPK una vez. Al abrir Valorant, la app auto-lanza, arranca el
 capturador sola, y el overlay aparece. Cero pasos manuales.
